@@ -3,7 +3,7 @@
   "name": "AutoH Mitsubishi AE200",
   "documentation": "https://github.com/autohhacs/mitsubishi-ae200-integration",
   "dependencies": [],
-  "codeowners": ["@sftgunner"],
+  "codeowners": ["@autohhacs"],
   "version": "2.0.0",
   "requirements": ["websockets"],
   "config_flow": true,
