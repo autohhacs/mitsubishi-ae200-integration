@@ -1,31 +1,50 @@
 import logging
-import voluptuous as vol
 import asyncio
 
-from homeassistant.components.climate import ClimateEntity, PLATFORM_SCHEMA
+from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
     HVACMode,
     ClimateEntityFeature,
 )
 from homeassistant.const import (
-    CONF_IP_ADDRESS,
     UnitOfTemperature,
     ATTR_TEMPERATURE,
 )
 from homeassistant.helpers.entity import generate_entity_id
-import homeassistant.helpers.config_validation as cv
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import (
+    DOMAIN,
+    CONF_CONTROLLER_ID,
+    CONF_IP_ADDRESS,
+    CONF_TEMPERATURE_UNIT,
+    TEMP_FAHRENHEIT,
+)
 from .mitsubishi_ae200 import MitsubishiAE200Functions
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
-    vol.Required("controller_id"): cv.string,
-    vol.Required(CONF_IP_ADDRESS): cv.string,
-})
+MIN_TEMP_C = 16
+MAX_TEMP_C = 30
+MIN_TEMP_F = 61  # 16°C converted to F
+MAX_TEMP_F = 86  # 30°C converted to F
 
-MIN_TEMP = 16
-MAX_TEMP = 30
+
+def celsius_to_fahrenheit(celsius):
+    """Convert Celsius to Fahrenheit."""
+    if celsius is None:
+        return None
+    return round((celsius * 9/5) + 32, 1)
+
+
+def fahrenheit_to_celsius(fahrenheit):
+    """Convert Fahrenheit to Celsius."""
+    if fahrenheit is None:
+        return None
+    return round((fahrenheit - 32) * 5/9, 1)
+
 
 class Mode:
     Heat = "HEAT"
@@ -33,6 +52,7 @@ class Mode:
     Cool = "COOL"
     Fan = "FAN"
     Auto = "AUTO"
+
 
 class AE200Device:
     def __init__(self, ipaddress: str, deviceid: str, name: str, mitsubishi_ae200_functions: MitsubishiAE200Functions):
@@ -132,11 +152,13 @@ class AE200Device:
     async def powerOff(self):
         await self._mitsubishi_ae200_functions.sendAsync(self._ipaddress, self._deviceid, {"Drive": "OFF"})
 
+
 class AE200Climate(ClimateEntity):
-    def __init__(self, hass, device: AE200Device, controllerid: str):
+    def __init__(self, hass, device: AE200Device, controllerid: str, use_fahrenheit: bool = False):
         self._device = device
+        self._use_fahrenheit = use_fahrenheit
         self.entity_id = generate_entity_id(
-            "climate.{}", f"mitsubishi_ae_200_{controllerid}_{device.getName()}", None, hass
+            "climate.{}", f"autoh_mitsubishi_ae_200_{controllerid}_{device.getName()}", None, hass
         )
         self._attr_hvac_modes = [
             HVACMode.OFF,
@@ -168,7 +190,6 @@ class AE200Climate(ClimateEntity):
         self._reverse_swing_mode_map = {v: k for k, v in self._swing_mode_map.items()}
         self._attr_swing_modes = list(self._swing_mode_map.values())
         
-        
         self._attr_supported_features = (
             ClimateEntityFeature.TARGET_TEMPERATURE | 
             ClimateEntityFeature.FAN_MODE | 
@@ -177,7 +198,7 @@ class AE200Climate(ClimateEntity):
             ClimateEntityFeature.TURN_ON |
             ClimateEntityFeature.TURN_OFF
         )
-        self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+        self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT if use_fahrenheit else UnitOfTemperature.CELSIUS
         self._current_temperature = None
         self._target_temperature = None
         self._target_temperature_high = None
@@ -185,7 +206,7 @@ class AE200Climate(ClimateEntity):
         self._swing_mode = None
         self._fan_mode = None
         self._hvac_mode = HVACMode.OFF
-        self._last_hvac_mode = HVACMode.COOL  # Keep track of last HVAC mode to handle turning on/off
+        self._last_hvac_mode = HVACMode.COOL
 
     @property
     def supported_features(self):
@@ -197,7 +218,7 @@ class AE200Climate(ClimateEntity):
 
     @property
     def name(self):
-        return self._device.getName()
+        return f"AutoH {self._device.getName()}"
 
     @property
     def temperature_unit(self):
@@ -205,47 +226,50 @@ class AE200Climate(ClimateEntity):
 
     @property
     def current_temperature(self):
-        return self._current_temperature
+        if self._current_temperature is None:
+            return None
+        return celsius_to_fahrenheit(self._current_temperature) if self._use_fahrenheit else self._current_temperature
 
     @property
     def target_temperature(self):
         if self._hvac_mode == HVACMode.HEAT_COOL:
             return None
-        else:
-            return self._target_temperature
+        if self._target_temperature is None:
+            return None
+        return celsius_to_fahrenheit(self._target_temperature) if self._use_fahrenheit else self._target_temperature
     
     @property
     def target_temperature_high(self):
         if self._hvac_mode == HVACMode.HEAT_COOL:
-            return self._target_temperature_high
-        else:
-            return None
+            if self._target_temperature_high is None:
+                return None
+            return celsius_to_fahrenheit(self._target_temperature_high) if self._use_fahrenheit else self._target_temperature_high
+        return None
     
     @property
     def target_temperature_low(self):
         if self._hvac_mode == HVACMode.HEAT_COOL:
-            return self._target_temperature_low
-        else:
-            return None
+            if self._target_temperature_low is None:
+                return None
+            return celsius_to_fahrenheit(self._target_temperature_low) if self._use_fahrenheit else self._target_temperature_low
+        return None
 
     @property
     def min_temp(self):
-        return MIN_TEMP # Think this can be variable if the eco-protect mode is enabled, but for now we use a constant
+        return MIN_TEMP_F if self._use_fahrenheit else MIN_TEMP_C
 
     @property
     def max_temp(self):
-        return MAX_TEMP # Think this can be variable if the eco-protect mode is enabled, but for now we use a constant
+        return MAX_TEMP_F if self._use_fahrenheit else MAX_TEMP_C
 
     @property
     def fan_mode(self):
-        # Convert internal value to user-friendly label
         if self._fan_mode in self._fan_mode_map:
             return self._fan_mode_map[self._fan_mode]
         return self._fan_mode
     
     @property
     def swing_mode(self):
-        # Convert internal value to user-friendly label
         if self._swing_mode in self._swing_mode_map:
             return self._swing_mode_map[self._swing_mode]
         return self._swing_mode
@@ -257,8 +281,7 @@ class AE200Climate(ClimateEntity):
     async def async_turn_on(self):
         _LOGGER.info(f"Turning on HVAC mode: {self._last_hvac_mode} for {self.entity_id}")
         await self._device.powerOn()
-        self._hvac_mode = self._last_hvac_mode # Update the home assistant state to the existing mode
-        # If the last HVAC mode was OFF, we need to set it to the last known mode
+        self._hvac_mode = self._last_hvac_mode
         self.async_write_ha_state()
         
     async def async_turn_off(self):
@@ -268,7 +291,6 @@ class AE200Climate(ClimateEntity):
         self.async_write_ha_state()
     
     async def async_set_swing_mode(self, swing_mode):
-        # Convert user-friendly label back to device value
         device_swing_mode = self._reverse_swing_mode_map.get(swing_mode, swing_mode)
         _LOGGER.info(f"Setting swing mode: {device_swing_mode} for {self.entity_id}")
         await self._device.setSwingMode(device_swing_mode)
@@ -276,7 +298,6 @@ class AE200Climate(ClimateEntity):
         self.async_write_ha_state()
 
     async def async_set_fan_mode(self, fan_mode):
-        # Convert user-friendly label back to device value
         device_fan_mode = self._reverse_fan_mode_map.get(fan_mode, fan_mode)
         _LOGGER.info(f"Setting fan mode: {device_fan_mode} for {self.entity_id}")
         await self._device.setFanSpeed(device_fan_mode)
@@ -285,20 +306,25 @@ class AE200Climate(ClimateEntity):
 
     async def async_set_temperature(self, **kwargs):
         _LOGGER.info(f"Setting temperature: {kwargs.get(ATTR_TEMPERATURE)} for {self.entity_id}")
-        _LOGGER.info(kwargs)
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if temperature is not None:
-            await self._device.setTemperature(temperature)
-            self._target_temperature = temperature
+            # Convert to Celsius for device communication
+            temp_celsius = fahrenheit_to_celsius(temperature) if self._use_fahrenheit else temperature
+            await self._device.setTemperature(temp_celsius)
+            self._target_temperature = temp_celsius
             self.async_write_ha_state()
             
         temp_low = kwargs.get("target_temp_low")
         temp_high = kwargs.get("target_temp_high")
         if temp_low is not None and temp_high is not None:
-            await self._device.setTemperatureHigh(temp_high)
-            await self._device.setTemperatureLow(temp_low)
-            self._target_temperature_low = temp_low
-            self._target_temperature_high = temp_high
+            # Convert to Celsius for device communication
+            temp_low_celsius = fahrenheit_to_celsius(temp_low) if self._use_fahrenheit else temp_low
+            temp_high_celsius = fahrenheit_to_celsius(temp_high) if self._use_fahrenheit else temp_high
+            
+            await self._device.setTemperatureHigh(temp_high_celsius)
+            await self._device.setTemperatureLow(temp_low_celsius)
+            self._target_temperature_low = temp_low_celsius
+            self._target_temperature_high = temp_high_celsius
             self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode):
@@ -317,6 +343,7 @@ class AE200Climate(ClimateEntity):
             }
             await self._device.setMode(mode_map.get(hvac_mode, Mode.Auto))
             self._hvac_mode = hvac_mode
+            self._last_hvac_mode = hvac_mode
         self.async_write_ha_state()
 
     async def async_update(self):
@@ -332,42 +359,57 @@ class AE200Climate(ClimateEntity):
             mode = await self._device.getMode()
             if mode == Mode.Heat:
                 self._hvac_mode = HVACMode.HEAT
+                self._last_hvac_mode = HVACMode.HEAT
             elif mode == Mode.Cool:
                 self._hvac_mode = HVACMode.COOL
+                self._last_hvac_mode = HVACMode.COOL
             elif mode == Mode.Dry:
                 self._hvac_mode = HVACMode.DRY
+                self._last_hvac_mode = HVACMode.DRY
             elif mode == Mode.Fan:
                 self._hvac_mode = HVACMode.FAN_ONLY
-                self._target_temperature = None # Special case where there is no target temperature for fan mode
+                self._last_hvac_mode = HVACMode.FAN_ONLY
+                self._target_temperature = None
             elif mode == Mode.Auto:
                 self._hvac_mode = HVACMode.HEAT_COOL
+                self._last_hvac_mode = HVACMode.HEAT_COOL
             else:
                 self._hvac_mode = HVACMode.HEAT_COOL
+                self._last_hvac_mode = HVACMode.HEAT_COOL
         else:
             self._target_temperature = None
             self._target_temperature_high = None
             self._target_temperature_low = None
             self._hvac_mode = HVACMode.OFF
 
-async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
-    _LOGGER.info("Setting up Mitsubishi AE200 platform...")
 
-    controllerid = config.get('controller_id')
-    ipaddress = config.get(CONF_IP_ADDRESS)
-    if not controllerid or not ipaddress:
-        _LOGGER.error("Missing controller_id or ip_address in configuration")
-        return
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up AutoH Mitsubishi AE200 climate devices from config entry."""
+    _LOGGER.info("Setting up AutoH Mitsubishi AE200 platform...")
+
+    config = hass.data[DOMAIN][config_entry.entry_id]
+    controllerid = config[CONF_CONTROLLER_ID]
+    ipaddress = config[CONF_IP_ADDRESS]
+    use_fahrenheit = config.get(CONF_TEMPERATURE_UNIT) == TEMP_FAHRENHEIT
 
     mitsubishi_ae200_functions = MitsubishiAE200Functions()
     devices = []
-    # Get device list from controller
-    group_list = await mitsubishi_ae200_functions.getDevicesAsync(ipaddress)
-    for group in group_list:
-        device = AE200Device(ipaddress, group["id"], group["name"], mitsubishi_ae200_functions)
-        devices.append(AE200Climate(hass, device, controllerid))
+    
+    try:
+        # Get device list from controller
+        group_list = await mitsubishi_ae200_functions.getDevicesAsync(ipaddress)
+        for group in group_list:
+            device = AE200Device(ipaddress, group["id"], group["name"], mitsubishi_ae200_functions)
+            devices.append(AE200Climate(hass, device, controllerid, use_fahrenheit))
 
-    if devices:
-        async_add_entities(devices, update_before_add=True)
-        _LOGGER.info(f"Added {len(devices)} Mitsubishi AE200 device(s).")
-    else:
-        _LOGGER.warning("No Mitsubishi AE200 devices found.")
+        if devices:
+            async_add_entities(devices, update_before_add=True)
+            _LOGGER.info(f"Added {len(devices)} AutoH Mitsubishi AE200 device(s).")
+        else:
+            _LOGGER.warning("No AutoH Mitsubishi AE200 devices found.")
+    except Exception as exc:
+        _LOGGER.error("Error setting up AutoH Mitsubishi AE200 devices: %s", exc)
