@@ -1,0 +1,9 @@
+{
+  "name": "AutoH Mitsubishi AE200",
+  "content_in_root": false,
+  "filename": "mitsubishi_ae200",
+  "country": ["US", "CA", "JP"],
+  "homeassistant": "2023.1.0",
+  "render_readme": true,
+  "iot_class": "Local Polling"
+}
