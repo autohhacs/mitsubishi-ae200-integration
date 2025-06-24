@@ -207,6 +207,17 @@ class AE200Climate(ClimateEntity):
         self._fan_mode = None
         self._hvac_mode = HVACMode.OFF
         self._last_hvac_mode = HVACMode.COOL
+        
+        # Track when we set values to prevent immediate overwrite from device polling
+        self._setting_temperature = False
+        self._setting_mode = False
+        self._setting_fan = False
+        self._setting_swing = False
+        self._last_temp_set_time = 0
+        self._last_mode_set_time = 0
+        self._last_fan_set_time = 0
+        self._last_swing_set_time = 0
+        self._ignore_updates_duration = 3  # seconds to ignore updates after setting values
 
     @property
     def supported_features(self):
@@ -278,41 +289,126 @@ class AE200Climate(ClimateEntity):
     def hvac_mode(self):
         return self._hvac_mode
     
+    def _should_ignore_updates(self, update_type="temp"):
+        """Check if we should ignore device updates for a specific type."""
+        current_time = asyncio.get_event_loop().time()
+        
+        if update_type == "temp":
+            return (current_time - self._last_temp_set_time) < self._ignore_updates_duration
+        elif update_type == "mode":
+            return (current_time - self._last_mode_set_time) < self._ignore_updates_duration
+        elif update_type == "fan":
+            return (current_time - self._last_fan_set_time) < self._ignore_updates_duration
+        elif update_type == "swing":
+            return (current_time - self._last_swing_set_time) < self._ignore_updates_duration
+        
+        return False
+    
     async def async_turn_on(self):
         _LOGGER.info(f"Turning on HVAC mode: {self._last_hvac_mode} for {self.entity_id}")
-        await self._device.powerOn()
-        self._hvac_mode = self._last_hvac_mode
-        self.async_write_ha_state()
+        current_time = asyncio.get_event_loop().time()
+        self._setting_mode = True
+        self._last_mode_set_time = current_time
+        
+        try:
+            await self._device.powerOn()
+            # Give device time to process the change
+            await asyncio.sleep(0.5)
+            
+            self._hvac_mode = self._last_hvac_mode
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully turned on HVAC for {self.entity_id}")
+        except Exception as exc:
+            _LOGGER.error(f"Failed to turn on HVAC for {self.entity_id}: {exc}")
+        finally:
+            self._setting_mode = False
         
     async def async_turn_off(self):
         _LOGGER.info(f"Turning off HVAC for {self.entity_id}")
-        await self._device.powerOff()
-        self._hvac_mode = HVACMode.OFF
-        self.async_write_ha_state()
+        current_time = asyncio.get_event_loop().time()
+        self._setting_mode = True
+        self._last_mode_set_time = current_time
+        
+        try:
+            await self._device.powerOff()
+            # Give device time to process the change
+            await asyncio.sleep(0.5)
+            
+            self._hvac_mode = HVACMode.OFF
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully turned off HVAC for {self.entity_id}")
+        except Exception as exc:
+            _LOGGER.error(f"Failed to turn off HVAC for {self.entity_id}: {exc}")
+        finally:
+            self._setting_mode = False
     
     async def async_set_swing_mode(self, swing_mode):
         device_swing_mode = self._reverse_swing_mode_map.get(swing_mode, swing_mode)
         _LOGGER.info(f"Setting swing mode: {device_swing_mode} for {self.entity_id}")
-        await self._device.setSwingMode(device_swing_mode)
-        self._swing_mode = device_swing_mode
-        self.async_write_ha_state()
+        current_time = asyncio.get_event_loop().time()
+        self._setting_swing = True
+        self._last_swing_set_time = current_time
+        
+        try:
+            await self._device.setSwingMode(device_swing_mode)
+            # Give device time to process the change
+            await asyncio.sleep(0.3)
+            
+            self._swing_mode = device_swing_mode
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully set swing mode to {device_swing_mode} for {self.entity_id}")
+        except Exception as exc:
+            _LOGGER.error(f"Failed to set swing mode for {self.entity_id}: {exc}")
+        finally:
+            self._setting_swing = False
 
     async def async_set_fan_mode(self, fan_mode):
         device_fan_mode = self._reverse_fan_mode_map.get(fan_mode, fan_mode)
         _LOGGER.info(f"Setting fan mode: {device_fan_mode} for {self.entity_id}")
-        await self._device.setFanSpeed(device_fan_mode)
-        self._fan_mode = device_fan_mode
-        self.async_write_ha_state()
+        current_time = asyncio.get_event_loop().time()
+        self._setting_fan = True
+        self._last_fan_set_time = current_time
+        
+        try:
+            await self._device.setFanSpeed(device_fan_mode)
+            # Give device time to process the change
+            await asyncio.sleep(0.3)
+            
+            self._fan_mode = device_fan_mode
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully set fan mode to {device_fan_mode} for {self.entity_id}")
+        except Exception as exc:
+            _LOGGER.error(f"Failed to set fan mode for {self.entity_id}: {exc}")
+        finally:
+            self._setting_fan = False
 
     async def async_set_temperature(self, **kwargs):
         _LOGGER.info(f"Setting temperature: {kwargs.get(ATTR_TEMPERATURE)} for {self.entity_id}")
+        current_time = asyncio.get_event_loop().time()
+        
         temperature = kwargs.get(ATTR_TEMPERATURE)
         if temperature is not None:
             # Convert to Celsius for device communication
             temp_celsius = fahrenheit_to_celsius(temperature) if self._use_fahrenheit else temperature
-            await self._device.setTemperature(temp_celsius)
-            self._target_temperature = temp_celsius
-            self.async_write_ha_state()
+            
+            # Mark that we're setting temperature and track the time
+            self._setting_temperature = True
+            self._last_temp_set_time = current_time
+            
+            try:
+                await self._device.setTemperature(temp_celsius)
+                # Give device time to process the change
+                await asyncio.sleep(0.5)
+                
+                # Update our local state
+                self._target_temperature = temp_celsius
+                self.async_write_ha_state()
+                
+                _LOGGER.info(f"Successfully set temperature to {temp_celsius}°C for {self.entity_id}")
+            except Exception as exc:
+                _LOGGER.error(f"Failed to set temperature for {self.entity_id}: {exc}")
+            finally:
+                self._setting_temperature = False
             
         temp_low = kwargs.get("target_temp_low")
         temp_high = kwargs.get("target_temp_high")
@@ -321,66 +417,127 @@ class AE200Climate(ClimateEntity):
             temp_low_celsius = fahrenheit_to_celsius(temp_low) if self._use_fahrenheit else temp_low
             temp_high_celsius = fahrenheit_to_celsius(temp_high) if self._use_fahrenheit else temp_high
             
-            await self._device.setTemperatureHigh(temp_high_celsius)
-            await self._device.setTemperatureLow(temp_low_celsius)
-            self._target_temperature_low = temp_low_celsius
-            self._target_temperature_high = temp_high_celsius
-            self.async_write_ha_state()
+            # Mark that we're setting temperature and track the time
+            self._setting_temperature = True
+            self._last_temp_set_time = current_time
+            
+            try:
+                await self._device.setTemperatureHigh(temp_high_celsius)
+                await self._device.setTemperatureLow(temp_low_celsius)
+                # Give device time to process the changes
+                await asyncio.sleep(0.5)
+                
+                # Update our local state
+                self._target_temperature_low = temp_low_celsius
+                self._target_temperature_high = temp_high_celsius
+                self.async_write_ha_state()
+                
+                _LOGGER.info(f"Successfully set temperature range {temp_low_celsius}-{temp_high_celsius}°C for {self.entity_id}")
+            except Exception as exc:
+                _LOGGER.error(f"Failed to set temperature range for {self.entity_id}: {exc}")
+            finally:
+                self._setting_temperature = False
 
     async def async_set_hvac_mode(self, hvac_mode):
         _LOGGER.info(f"Setting HVAC mode: {hvac_mode} for {self.entity_id}")
-        if hvac_mode == HVACMode.OFF:
-            await self._device.powerOff()
-            self._hvac_mode = HVACMode.OFF
-        else:
-            await self._device.powerOn()
-            mode_map = {
-                HVACMode.HEAT: Mode.Heat,
-                HVACMode.COOL: Mode.Cool,
-                HVACMode.DRY: Mode.Dry,
-                HVACMode.FAN_ONLY: Mode.Fan,
-                HVACMode.HEAT_COOL: Mode.Auto,
-            }
-            await self._device.setMode(mode_map.get(hvac_mode, Mode.Auto))
-            self._hvac_mode = hvac_mode
-            self._last_hvac_mode = hvac_mode
-        self.async_write_ha_state()
+        current_time = asyncio.get_event_loop().time()
+        self._setting_mode = True
+        self._last_mode_set_time = current_time
+        
+        try:
+            if hvac_mode == HVACMode.OFF:
+                await self._device.powerOff()
+                self._hvac_mode = HVACMode.OFF
+            else:
+                await self._device.powerOn()
+                mode_map = {
+                    HVACMode.HEAT: Mode.Heat,
+                    HVACMode.COOL: Mode.Cool,
+                    HVACMode.DRY: Mode.Dry,
+                    HVACMode.FAN_ONLY: Mode.Fan,
+                    HVACMode.HEAT_COOL: Mode.Auto,
+                }
+                await self._device.setMode(mode_map.get(hvac_mode, Mode.Auto))
+                self._hvac_mode = hvac_mode
+                self._last_hvac_mode = hvac_mode
+                
+            # Give device time to process the change
+            await asyncio.sleep(0.5)
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully set HVAC mode to {hvac_mode} for {self.entity_id}")
+        except Exception as exc:
+            _LOGGER.error(f"Failed to set HVAC mode for {self.entity_id}: {exc}")
+        finally:
+            self._setting_mode = False
 
     async def async_update(self):
         _LOGGER.info(f"Updating climate entity: {self.entity_id}")
+        
+        # Skip update if we're currently setting values or just set them recently
+        if (self._setting_temperature or self._setting_mode or 
+            self._setting_fan or self._setting_swing):
+            _LOGGER.debug(f"Skipping update for {self.entity_id} - currently setting values")
+            return
+            
         await self._device._refresh_device_info_async()
+        
+        # Always update current temperature (room temperature)
         self._current_temperature = await self._device.getRoomTemperature()
-        self._fan_mode = await self._device.getFanSpeed()
-        self._swing_mode = await self._device.getSwingMode()
-        if await self._device.isPowerOn():
-            self._target_temperature = await self._device.getTargetTemperature()
-            self._target_temperature_high = await self._device.getTargetTemperatureHigh()
-            self._target_temperature_low = await self._device.getTargetTemperatureLow()
-            mode = await self._device.getMode()
-            if mode == Mode.Heat:
-                self._hvac_mode = HVACMode.HEAT
-                self._last_hvac_mode = HVACMode.HEAT
-            elif mode == Mode.Cool:
-                self._hvac_mode = HVACMode.COOL
-                self._last_hvac_mode = HVACMode.COOL
-            elif mode == Mode.Dry:
-                self._hvac_mode = HVACMode.DRY
-                self._last_hvac_mode = HVACMode.DRY
-            elif mode == Mode.Fan:
-                self._hvac_mode = HVACMode.FAN_ONLY
-                self._last_hvac_mode = HVACMode.FAN_ONLY
-                self._target_temperature = None
-            elif mode == Mode.Auto:
-                self._hvac_mode = HVACMode.HEAT_COOL
-                self._last_hvac_mode = HVACMode.HEAT_COOL
-            else:
-                self._hvac_mode = HVACMode.HEAT_COOL
-                self._last_hvac_mode = HVACMode.HEAT_COOL
+        
+        # Update fan mode only if we haven't set it recently
+        if not self._should_ignore_updates("fan"):
+            self._fan_mode = await self._device.getFanSpeed()
         else:
-            self._target_temperature = None
-            self._target_temperature_high = None
-            self._target_temperature_low = None
-            self._hvac_mode = HVACMode.OFF
+            _LOGGER.debug(f"Ignoring fan mode update for {self.entity_id} - recently set")
+            
+        # Update swing mode only if we haven't set it recently  
+        if not self._should_ignore_updates("swing"):
+            self._swing_mode = await self._device.getSwingMode()
+        else:
+            _LOGGER.debug(f"Ignoring swing mode update for {self.entity_id} - recently set")
+            
+        if await self._device.isPowerOn():
+            # Update target temperatures only if we haven't set them recently
+            if not self._should_ignore_updates("temp"):
+                self._target_temperature = await self._device.getTargetTemperature()
+                self._target_temperature_high = await self._device.getTargetTemperatureHigh()
+                self._target_temperature_low = await self._device.getTargetTemperatureLow()
+            else:
+                _LOGGER.debug(f"Ignoring temperature update for {self.entity_id} - recently set")
+                
+            # Update HVAC mode only if we haven't set it recently
+            if not self._should_ignore_updates("mode"):
+                mode = await self._device.getMode()
+                if mode == Mode.Heat:
+                    self._hvac_mode = HVACMode.HEAT
+                    self._last_hvac_mode = HVACMode.HEAT
+                elif mode == Mode.Cool:
+                    self._hvac_mode = HVACMode.COOL
+                    self._last_hvac_mode = HVACMode.COOL
+                elif mode == Mode.Dry:
+                    self._hvac_mode = HVACMode.DRY
+                    self._last_hvac_mode = HVACMode.DRY
+                elif mode == Mode.Fan:
+                    self._hvac_mode = HVACMode.FAN_ONLY
+                    self._last_hvac_mode = HVACMode.FAN_ONLY
+                    if not self._should_ignore_updates("temp"):
+                        self._target_temperature = None
+                elif mode == Mode.Auto:
+                    self._hvac_mode = HVACMode.HEAT_COOL
+                    self._last_hvac_mode = HVACMode.HEAT_COOL
+                else:
+                    self._hvac_mode = HVACMode.HEAT_COOL
+                    self._last_hvac_mode = HVACMode.HEAT_COOL
+            else:
+                _LOGGER.debug(f"Ignoring mode update for {self.entity_id} - recently set")
+        else:
+            # Device is off - always update this state
+            if not self._should_ignore_updates("temp"):
+                self._target_temperature = None
+                self._target_temperature_high = None
+                self._target_temperature_low = None
+            if not self._should_ignore_updates("mode"):
+                self._hvac_mode = HVACMode.OFF
 
 
 async def async_setup_entry(
