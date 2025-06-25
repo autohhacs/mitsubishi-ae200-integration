@@ -1,38 +1,27 @@
 {
-  "config": {
-    "step": {
-      "user": {
-        "title": "AutoH Mitsubishi AE200 Setup",
-        "description": "Set up your AutoH Mitsubishi AE200 HVAC controller",
-        "data": {
-          "controller_id": "Controller ID",
-          "ip_address": "IP Address",
-          "temperature_unit": "Temperature Unit"
-        },
-        "data_description": {
-          "controller_id": "Unique identifier for this controller",
-          "ip_address": "IP address of the AE200 controller",
-          "temperature_unit": "Choose temperature unit for display"
-        }
-      }
-    },
-    "error": {
-      "cannot_connect": "Failed to connect to the controller",
-      "invalid_auth": "Invalid authentication",
-      "unknown": "Unexpected error occurred"
-    },
-    "abort": {
-      "already_configured": "Device is already configured"
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "AutoH Mitsubishi AE200 Options",
-        "data": {
-          "temperature_unit": "Temperature Unit"
-        }
-      }
-    }
-  }
+“config”: {
+“step”: {
+“user”: {
+“title”: “AutoH Mitsubishi AE200 Setup”,
+“description”: “Set up your AutoH Mitsubishi AE200 HVAC controller”,
+“data”: {
+“controller_id”: “Controller ID”,
+“ip_address”: “IP Address”,
+“temperature_unit”: “Temperature Unit”
+},
+“data_description”: {
+“controller_id”: “Unique identifier for this controller”,
+“ip_address”: “IP address of the AE200 controller”,
+“temperature_unit”: “Choose temperature unit for display”
+}
+}
+},
+“error”: {
+“cannot_connect”: “Failed to connect to the controller. Please check the IP address and ensure the controller is online.”,
+“unknown”: “Unexpected error occurred during setup.”
+},
+“abort”: {
+“already_configured”: “Device is already configured”
+}
+}
 }
