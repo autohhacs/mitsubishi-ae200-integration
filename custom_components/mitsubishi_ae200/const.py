@@ -1,13 +1,14 @@
-"""Constants for the AutoH Mitsubishi AE200 integration."""
+“”“Constants for the AutoH Mitsubishi AE200 integration.”””
 
-DOMAIN = "mitsubishi_ae200"
+DOMAIN = “mitsubishi_ae200”
 
-CONF_CONTROLLER_ID = "controller_id"
-CONF_IP_ADDRESS = "ip_address"
-CONF_TEMPERATURE_UNIT = "temperature_unit"
+CONF_CONTROLLER_ID = “controller_id”
+CONF_IP_ADDRESS = “ip_address”
+CONF_TEMPERATURE_UNIT = “temperature_unit”
 
-DEFAULT_NAME = "AutoH Mitsubishi AE200"
+DEFAULT_NAME = “AutoH Mitsubishi AE200”
 
 # Temperature unit options
-TEMP_CELSIUS = "celsius"
-TEMP_FAHRENHEIT = "fahrenheit"
+
+TEMP_CELSIUS = “celsius”
+TEMP_FAHRENHEIT = “fahrenheit”
