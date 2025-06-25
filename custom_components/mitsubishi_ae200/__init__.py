@@ -1,9 +1,11 @@
 “”“The AutoH Mitsubishi AE200 integration.”””
+from **future** import annotations
+
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
