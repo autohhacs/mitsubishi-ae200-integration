@@ -58,15 +58,13 @@ self._name = name
 self._mitsubishi_ae200_functions = mitsubishi_ae200_functions
 self._attributes = {}
 self._last_info_time_s = 0
-self._info_lease_seconds = 10
+self._info_lease_seconds = 8
 
 ```
 async def _refresh_device_info_async(self):
-    _LOGGER.info(f"Refreshing device info: {self._ipaddress} - {self._deviceid} ({self._name})")
+    _LOGGER.debug(f"Refreshing device info: {self._ipaddress} - {self._deviceid} ({self._name})")
     self._attributes = await self._mitsubishi_ae200_functions.getDeviceInfoAsync(self._ipaddress, self._deviceid)
     self._last_info_time_s = asyncio.get_event_loop().time()
-    if self._deviceid == "6":
-        _LOGGER.info(self._attributes) # Only log HVAC for Library
 
 async def _get_info(self, key, default_value):
     if not self._attributes or (asyncio.get_event_loop().time() - self._last_info_time_s) > self._info_lease_seconds:
@@ -118,12 +116,12 @@ async def isPowerOn(self):
     return await self._get_info("Drive", "OFF") == "ON"
 
 async def setTemperature(self, temperature):
-    """Set temperature and verify the change was accepted."""
+    """Set temperature using enhanced verification method."""
     _LOGGER.info(f"Setting temperature to {temperature}°C for device {self._deviceid}")
     
     mode = await self.getMode()
-    temp_key = None
     
+    # Determine which temperature register to use based on mode
     if mode == Mode.Heat:
         temp_key = "SetTemp2"
     elif mode == Mode.Cool:
@@ -132,275 +130,153 @@ async def setTemperature(self, temperature):
         temp_key = "SetTemp1"
     else:
         temp_key = "SetTemp1"
-        
-    try:
-        # Send the temperature command
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {temp_key: str(round(temperature, 1))}
-        )
-        
-        if not success:
-            _LOGGER.error(f"Failed to send temperature command to device {self._deviceid}")
-            return False
-        
-        # Wait for device to process
-        await asyncio.sleep(1.0)
-        
-        # Verify the change by refreshing device info
-        await self._refresh_device_info_async()
-        
-        # Check if the temperature was actually set
-        actual_temp = await self._to_float(await self._get_info(temp_key, None))
-        if actual_temp is not None:
-            temp_diff = abs(actual_temp - temperature)
-            if temp_diff <= 0.5:  # Allow for small rounding differences
-                _LOGGER.info(f"Temperature successfully set to {actual_temp}°C for device {self._deviceid}")
-                return True
-            else:
-                _LOGGER.warning(f"Temperature setting may have failed. Expected: {temperature}°C, Got: {actual_temp}°C for device {self._deviceid}")
-                return False
-        else:
-            _LOGGER.warning(f"Could not verify temperature setting for device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to set temperature for device {self._deviceid}: {exc}")
-        return False
+    
+    # Round temperature to one decimal place for device compatibility
+    temp_value = round(float(temperature), 1)
+    
+    # Use the enhanced send and verify method
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {temp_key: temp_value}
+    )
+    
+    if success:
+        _LOGGER.info(f"Temperature successfully set and verified: {temp_value}°C for device {self._deviceid}")
+        # Force refresh on next read
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to set temperature {temp_value}°C for device {self._deviceid}")
+    
+    return success
         
 async def setTemperatureHigh(self, temperature):
-    """Set high temperature and verify the change was accepted."""
+    """Set high temperature using enhanced verification method."""
     _LOGGER.info(f"Setting high temperature to {temperature}°C for device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"SetTemp1": str(round(temperature, 1))}
-        )
-        
-        if not success:
-            _LOGGER.error(f"Failed to send high temperature command to device {self._deviceid}")
-            return False
-        
-        # Wait for device to process
-        await asyncio.sleep(1.0)
-        
-        # Verify the change
-        await self._refresh_device_info_async()
-        actual_temp = await self._to_float(await self._get_info("SetTemp1", None))
-        
-        if actual_temp is not None:
-            temp_diff = abs(actual_temp - temperature)
-            if temp_diff <= 0.5:
-                _LOGGER.info(f"High temperature successfully set to {actual_temp}°C for device {self._deviceid}")
-                return True
-            else:
-                _LOGGER.warning(f"High temperature setting may have failed. Expected: {temperature}°C, Got: {actual_temp}°C")
-                return False
-        else:
-            _LOGGER.warning(f"Could not verify high temperature setting for device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to set high temperature for device {self._deviceid}: {exc}")
-        return False
+    temp_value = round(float(temperature), 1)
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"SetTemp1": temp_value}
+    )
+    
+    if success:
+        _LOGGER.info(f"High temperature successfully set: {temp_value}°C for device {self._deviceid}")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to set high temperature {temp_value}°C for device {self._deviceid}")
+    
+    return success
     
 async def setTemperatureLow(self, temperature):
-    """Set low temperature and verify the change was accepted."""
+    """Set low temperature using enhanced verification method."""
     _LOGGER.info(f"Setting low temperature to {temperature}°C for device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"SetTemp2": str(round(temperature, 1))}
-        )
-        
-        if not success:
-            _LOGGER.error(f"Failed to send low temperature command to device {self._deviceid}")
-            return False
-        
-        # Wait for device to process
-        await asyncio.sleep(1.0)
-        
-        # Verify the change
-        await self._refresh_device_info_async()
-        actual_temp = await self._to_float(await self._get_info("SetTemp2", None))
-        
-        if actual_temp is not None:
-            temp_diff = abs(actual_temp - temperature)
-            if temp_diff <= 0.5:
-                _LOGGER.info(f"Low temperature successfully set to {actual_temp}°C for device {self._deviceid}")
-                return True
-            else:
-                _LOGGER.warning(f"Low temperature setting may have failed. Expected: {temperature}°C, Got: {actual_temp}°C")
-                return False
-        else:
-            _LOGGER.warning(f"Could not verify low temperature setting for device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to set low temperature for device {self._deviceid}: {exc}")
-        return False
+    temp_value = round(float(temperature), 1)
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"SetTemp2": temp_value}
+    )
+    
+    if success:
+        _LOGGER.info(f"Low temperature successfully set: {temp_value}°C for device {self._deviceid}")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to set low temperature {temp_value}°C for device {self._deviceid}")
+    
+    return success
 
 async def setFanSpeed(self, speed):
-    """Set fan speed and verify the change was accepted."""
+    """Set fan speed using enhanced verification method."""
     _LOGGER.info(f"Setting fan speed to {speed} for device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"FanSpeed": speed}
-        )
-        
-        if success:
-            await asyncio.sleep(0.5)
-            await self._refresh_device_info_async()
-            actual_speed = await self._get_info("FanSpeed", None)
-            if actual_speed == speed:
-                _LOGGER.info(f"Fan speed successfully set to {actual_speed} for device {self._deviceid}")
-                return True
-            else:
-                _LOGGER.warning(f"Fan speed setting may have failed. Expected: {speed}, Got: {actual_speed}")
-                return False
-        else:
-            _LOGGER.error(f"Failed to send fan speed command to device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to set fan speed for device {self._deviceid}: {exc}")
-        return False
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"FanSpeed": speed}
+    )
+    
+    if success:
+        _LOGGER.info(f"Fan speed successfully set: {speed} for device {self._deviceid}")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to set fan speed {speed} for device {self._deviceid}")
+    
+    return success
     
 async def setSwingMode(self, mode):
-    """Set swing mode and verify the change was accepted."""
+    """Set swing mode using enhanced verification method."""
     _LOGGER.info(f"Setting swing mode to {mode} for device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"AirDirection": mode}
-        )
-        
-        if success:
-            await asyncio.sleep(0.5)
-            await self._refresh_device_info_async()
-            actual_mode = await self._get_info("AirDirection", None)
-            if actual_mode == mode:
-                _LOGGER.info(f"Swing mode successfully set to {actual_mode} for device {self._deviceid}")
-                return True
-            else:
-                _LOGGER.warning(f"Swing mode setting may have failed. Expected: {mode}, Got: {actual_mode}")
-                return False
-        else:
-            _LOGGER.error(f"Failed to send swing mode command to device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to set swing mode for device {self._deviceid}: {exc}")
-        return False
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"AirDirection": mode}
+    )
+    
+    if success:
+        _LOGGER.info(f"Swing mode successfully set: {mode} for device {self._deviceid}")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to set swing mode {mode} for device {self._deviceid}")
+    
+    return success
 
 async def setMode(self, mode):
-    """Set HVAC mode and verify the change was accepted."""
+    """Set HVAC mode using enhanced verification method."""
     _LOGGER.info(f"Setting mode to {mode} for device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"Mode": mode}
-        )
-        
-        if success:
-            # Wait for device to process
-            await asyncio.sleep(1.0)
-            
-            # Verify the change
-            await self._refresh_device_info_async()
-            actual_mode = await self._get_info("Mode", None)
-            
-            if actual_mode == mode:
-                _LOGGER.info(f"Mode successfully set to {actual_mode} for device {self._deviceid}")
-                return True
-            else:
-                _LOGGER.warning(f"Mode setting may have failed. Expected: {mode}, Got: {actual_mode}")
-                return False
-        else:
-            _LOGGER.error(f"Failed to send mode command to device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to set mode for device {self._deviceid}: {exc}")
-        return False
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"Mode": mode}
+    )
+    
+    if success:
+        _LOGGER.info(f"Mode successfully set: {mode} for device {self._deviceid}")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to set mode {mode} for device {self._deviceid}")
+    
+    return success
 
 async def powerOn(self):
-    """Power on device and verify the change was accepted."""
+    """Power on device using enhanced verification method."""
     _LOGGER.info(f"Powering on device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"Drive": "ON"}
-        )
-        
-        if success:
-            # Wait for device to process
-            await asyncio.sleep(1.0)
-            
-            # Verify the change
-            await self._refresh_device_info_async()
-            actual_state = await self._get_info("Drive", "OFF")
-            
-            if actual_state == "ON":
-                _LOGGER.info(f"Device {self._deviceid} successfully powered on")
-                return True
-            else:
-                _LOGGER.warning(f"Power on may have failed for device {self._deviceid}. State: {actual_state}")
-                return False
-        else:
-            _LOGGER.error(f"Failed to send power on command to device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to power on device {self._deviceid}: {exc}")
-        return False
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"Drive": "ON"}
+    )
+    
+    if success:
+        _LOGGER.info(f"Device {self._deviceid} successfully powered on")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to power on device {self._deviceid}")
+    
+    return success
 
 async def powerOff(self):
-    """Power off device and verify the change was accepted."""
+    """Power off device using enhanced verification method."""
     _LOGGER.info(f"Powering off device {self._deviceid}")
     
-    try:
-        success = await self._mitsubishi_ae200_functions.sendAsync(
-            self._ipaddress, 
-            self._deviceid, 
-            {"Drive": "OFF"}
-        )
-        
-        if success:
-            # Wait for device to process
-            await asyncio.sleep(1.0)
-            
-            # Verify the change
-            await self._refresh_device_info_async()
-            actual_state = await self._get_info("Drive", "ON")
-            
-            if actual_state == "OFF":
-                _LOGGER.info(f"Device {self._deviceid} successfully powered off")
-                return True
-            else:
-                _LOGGER.warning(f"Power off may have failed for device {self._deviceid}. State: {actual_state}")
-                return False
-        else:
-            _LOGGER.error(f"Failed to send power off command to device {self._deviceid}")
-            return False
-            
-    except Exception as exc:
-        _LOGGER.error(f"Failed to power off device {self._deviceid}: {exc}")
-        return False
+    success = await self._mitsubishi_ae200_functions.sendAndVerifyAsync(
+        self._ipaddress,
+        self._deviceid,
+        {"Drive": "OFF"}
+    )
+    
+    if success:
+        _LOGGER.info(f"Device {self._deviceid} successfully powered off")
+        self._last_info_time_s = 0
+    else:
+        _LOGGER.error(f"Failed to power off device {self._deviceid}")
+    
+    return success
 ```
 
 class AE200Climate(ClimateEntity):
@@ -468,7 +344,7 @@ self._attr_fan_modes = list(self._fan_mode_map.values())
     self._last_mode_set_time = 0
     self._last_fan_set_time = 0
     self._last_swing_set_time = 0
-    self._ignore_updates_duration = 10  # Increased to 10 seconds to handle slow device response
+    self._ignore_updates_duration = 15  # Increased to 15 seconds for better reliability
 
 @property
 def supported_features(self):
@@ -555,110 +431,9 @@ def _should_ignore_updates(self, update_type="temp"):
     
     return False
 
-async def async_turn_on(self):
-    _LOGGER.info(f"Turning on HVAC mode: {self._last_hvac_mode} for {self.entity_id}")
-    current_time = asyncio.get_event_loop().time()
-    self._setting_mode = True
-    self._last_mode_set_time = current_time
-    
-    try:
-        success = await self._device.powerOn()
-        
-        if success:
-            self._hvac_mode = self._last_hvac_mode
-            self.async_write_ha_state()
-            _LOGGER.info(f"Successfully turned on HVAC for {self.entity_id}")
-        else:
-            _LOGGER.error(f"Failed to turn on HVAC for {self.entity_id}")
-            # Reset the ignore timer so we get device state sooner
-            self._last_mode_set_time = current_time - self._ignore_updates_duration
-            
-    except Exception as exc:
-        _LOGGER.error(f"Exception turning on HVAC for {self.entity_id}: {exc}")
-        # Reset the ignore timer on error
-        self._last_mode_set_time = current_time - self._ignore_updates_duration
-    finally:
-        self._setting_mode = False
-    
-async def async_turn_off(self):
-    _LOGGER.info(f"Turning off HVAC for {self.entity_id}")
-    current_time = asyncio.get_event_loop().time()
-    self._setting_mode = True
-    self._last_mode_set_time = current_time
-    
-    try:
-        success = await self._device.powerOff()
-        
-        if success:
-            self._hvac_mode = HVACMode.OFF
-            self.async_write_ha_state()
-            _LOGGER.info(f"Successfully turned off HVAC for {self.entity_id}")
-        else:
-            _LOGGER.error(f"Failed to turn off HVAC for {self.entity_id}")
-            # Reset the ignore timer so we get device state sooner
-            self._last_mode_set_time = current_time - self._ignore_updates_duration
-            
-    except Exception as exc:
-        _LOGGER.error(f"Exception turning off HVAC for {self.entity_id}: {exc}")
-        # Reset the ignore timer on error
-        self._last_mode_set_time = current_time - self._ignore_updates_duration
-    finally:
-        self._setting_mode = False
-
-async def async_set_swing_mode(self, swing_mode):
-    device_swing_mode = self._reverse_swing_mode_map.get(swing_mode, swing_mode)
-    _LOGGER.info(f"Setting swing mode: {device_swing_mode} for {self.entity_id}")
-    current_time = asyncio.get_event_loop().time()
-    self._setting_swing = True
-    self._last_swing_set_time = current_time
-    
-    try:
-        success = await self._device.setSwingMode(device_swing_mode)
-        
-        if success:
-            self._swing_mode = device_swing_mode
-            self.async_write_ha_state()
-            _LOGGER.info(f"Successfully set swing mode to {device_swing_mode} for {self.entity_id}")
-        else:
-            _LOGGER.error(f"Failed to set swing mode for {self.entity_id}")
-            # Reset the ignore timer so we get device state sooner
-            self._last_swing_set_time = current_time - self._ignore_updates_duration
-            
-    except Exception as exc:
-        _LOGGER.error(f"Exception setting swing mode for {self.entity_id}: {exc}")
-        # Reset the ignore timer on error
-        self._last_swing_set_time = current_time - self._ignore_updates_duration
-    finally:
-        self._setting_swing = False
-
-async def async_set_fan_mode(self, fan_mode):
-    device_fan_mode = self._reverse_fan_mode_map.get(fan_mode, fan_mode)
-    _LOGGER.info(f"Setting fan mode: {device_fan_mode} for {self.entity_id}")
-    current_time = asyncio.get_event_loop().time()
-    self._setting_fan = True
-    self._last_fan_set_time = current_time
-    
-    try:
-        success = await self._device.setFanSpeed(device_fan_mode)
-        
-        if success:
-            self._fan_mode = device_fan_mode
-            self.async_write_ha_state()
-            _LOGGER.info(f"Successfully set fan mode to {device_fan_mode} for {self.entity_id}")
-        else:
-            _LOGGER.error(f"Failed to set fan mode for {self.entity_id}")
-            # Reset the ignore timer so we get device state sooner
-            self._last_fan_set_time = current_time - self._ignore_updates_duration
-            
-    except Exception as exc:
-        _LOGGER.error(f"Exception setting fan mode for {self.entity_id}: {exc}")
-        # Reset the ignore timer on error
-        self._last_fan_set_time = current_time - self._ignore_updates_duration
-    finally:
-        self._setting_fan = False
-
 async def async_set_temperature(self, **kwargs):
-    _LOGGER.info(f"Setting temperature: {kwargs.get(ATTR_TEMPERATURE)} for {self.entity_id}")
+    """Set target temperature with enhanced reliability."""
+    _LOGGER.info(f"Setting temperature for {self.entity_id}: {kwargs}")
     current_time = asyncio.get_event_loop().time()
     
     temperature = kwargs.get(ATTR_TEMPERATURE)
@@ -671,24 +446,22 @@ async def async_set_temperature(self, **kwargs):
         self._last_temp_set_time = current_time
         
         try:
-            # Try to set the temperature on the device
+            # Try to set the temperature on the device with verification
             success = await self._device.setTemperature(temp_celsius)
             
             if success:
-                # Update our local state only if device confirmed the change
+                # Update our local state immediately for responsive UI
                 self._target_temperature = temp_celsius
                 self.async_write_ha_state()
                 _LOGGER.info(f"Successfully set temperature to {temp_celsius}°C for {self.entity_id}")
             else:
-                # If device didn't accept the change, don't update local state
+                # If device didn't accept the change, reset ignore timer
                 _LOGGER.error(f"Device rejected temperature change to {temp_celsius}°C for {self.entity_id}")
-                # Reset the ignore timer so we get device state sooner
-                self._last_temp_set_time = current_time - self._ignore_updates_duration
+                self._last_temp_set_time = 0
                 
         except Exception as exc:
             _LOGGER.error(f"Failed to set temperature for {self.entity_id}: {exc}")
-            # Reset the ignore timer on error
-            self._last_temp_set_time = current_time - self._ignore_updates_duration
+            self._last_temp_set_time = 0
         finally:
             self._setting_temperature = False
         
@@ -704,30 +477,29 @@ async def async_set_temperature(self, **kwargs):
         self._last_temp_set_time = current_time
         
         try:
-            # Try to set both temperatures
+            # Try to set both temperatures with verification
             high_success = await self._device.setTemperatureHigh(temp_high_celsius)
             low_success = await self._device.setTemperatureLow(temp_low_celsius)
             
             if high_success and low_success:
-                # Update our local state only if device confirmed both changes
+                # Update our local state immediately for responsive UI
                 self._target_temperature_low = temp_low_celsius
                 self._target_temperature_high = temp_high_celsius
                 self.async_write_ha_state()
                 _LOGGER.info(f"Successfully set temperature range {temp_low_celsius}-{temp_high_celsius}°C for {self.entity_id}")
             else:
-                # If device didn't accept the changes, don't update local state
+                # If device didn't accept the changes, reset ignore timer
                 _LOGGER.error(f"Device rejected temperature range change for {self.entity_id}")
-                # Reset the ignore timer so we get device state sooner
-                self._last_temp_set_time = current_time - self._ignore_updates_duration
+                self._last_temp_set_time = 0
                 
         except Exception as exc:
             _LOGGER.error(f"Failed to set temperature range for {self.entity_id}: {exc}")
-            # Reset the ignore timer on error
-            self._last_temp_set_time = current_time - self._ignore_updates_duration
+            self._last_temp_set_time = 0
         finally:
             self._setting_temperature = False
 
 async def async_set_hvac_mode(self, hvac_mode):
+    """Set HVAC mode with enhanced reliability."""
     _LOGGER.info(f"Setting HVAC mode: {hvac_mode} for {self.entity_id}")
     current_time = asyncio.get_event_loop().time()
     self._setting_mode = True
@@ -740,10 +512,9 @@ async def async_set_hvac_mode(self, hvac_mode):
             if success:
                 self._hvac_mode = HVACMode.OFF
         else:
-            # First power on
+            # First power on, then set mode
             power_success = await self._device.powerOn()
             if power_success:
-                # Then set the mode
                 mode_map = {
                     HVACMode.HEAT: Mode.Heat,
                     HVACMode.COOL: Mode.Cool,
@@ -762,20 +533,117 @@ async def async_set_hvac_mode(self, hvac_mode):
             _LOGGER.info(f"Successfully set HVAC mode to {hvac_mode} for {self.entity_id}")
         else:
             _LOGGER.error(f"Failed to set HVAC mode to {hvac_mode} for {self.entity_id}")
-            # Reset the ignore timer so we get device state sooner
-            self._last_mode_set_time = current_time - self._ignore_updates_duration
+            self._last_mode_set_time = 0
             
     except Exception as exc:
         _LOGGER.error(f"Exception setting HVAC mode for {self.entity_id}: {exc}")
-        # Reset the ignore timer on error
-        self._last_mode_set_time = current_time - self._ignore_updates_duration
+        self._last_mode_set_time = 0
+    finally:
+        self._setting_mode = False
+
+async def async_set_fan_mode(self, fan_mode):
+    """Set fan mode with enhanced reliability."""
+    device_fan_mode = self._reverse_fan_mode_map.get(fan_mode, fan_mode)
+    _LOGGER.info(f"Setting fan mode: {device_fan_mode} for {self.entity_id}")
+    current_time = asyncio.get_event_loop().time()
+    self._setting_fan = True
+    self._last_fan_set_time = current_time
+    
+    try:
+        success = await self._device.setFanSpeed(device_fan_mode)
+        
+        if success:
+            self._fan_mode = device_fan_mode
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully set fan mode to {device_fan_mode} for {self.entity_id}")
+        else:
+            _LOGGER.error(f"Failed to set fan mode for {self.entity_id}")
+            self._last_fan_set_time = 0
+            
+    except Exception as exc:
+        _LOGGER.error(f"Exception setting fan mode for {self.entity_id}: {exc}")
+        self._last_fan_set_time = 0
+    finally:
+        self._setting_fan = False
+
+async def async_set_swing_mode(self, swing_mode):
+    """Set swing mode with enhanced reliability."""
+    device_swing_mode = self._reverse_swing_mode_map.get(swing_mode, swing_mode)
+    _LOGGER.info(f"Setting swing mode: {device_swing_mode} for {self.entity_id}")
+    current_time = asyncio.get_event_loop().time()
+    self._setting_swing = True
+    self._last_swing_set_time = current_time
+    
+    try:
+        success = await self._device.setSwingMode(device_swing_mode)
+        
+        if success:
+            self._swing_mode = device_swing_mode
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully set swing mode to {device_swing_mode} for {self.entity_id}")
+        else:
+            _LOGGER.error(f"Failed to set swing mode for {self.entity_id}")
+            self._last_swing_set_time = 0
+            
+    except Exception as exc:
+        _LOGGER.error(f"Exception setting swing mode for {self.entity_id}: {exc}")
+        self._last_swing_set_time = 0
+    finally:
+        self._setting_swing = False
+
+async def async_turn_on(self):
+    """Turn on HVAC with enhanced reliability."""
+    _LOGGER.info(f"Turning on HVAC mode: {self._last_hvac_mode} for {self.entity_id}")
+    current_time = asyncio.get_event_loop().time()
+    self._setting_mode = True
+    self._last_mode_set_time = current_time
+    
+    try:
+        success = await self._device.powerOn()
+        
+        if success:
+            self._hvac_mode = self._last_hvac_mode
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully turned on HVAC for {self.entity_id}")
+        else:
+            _LOGGER.error(f"Failed to turn on HVAC for {self.entity_id}")
+            self._last_mode_set_time = 0
+            
+    except Exception as exc:
+        _LOGGER.error(f"Exception turning on HVAC for {self.entity_id}: {exc}")
+        self._last_mode_set_time = 0
+    finally:
+        self._setting_mode = False
+    
+async def async_turn_off(self):
+    """Turn off HVAC with enhanced reliability."""
+    _LOGGER.info(f"Turning off HVAC for {self.entity_id}")
+    current_time = asyncio.get_event_loop().time()
+    self._setting_mode = True
+    self._last_mode_set_time = current_time
+    
+    try:
+        success = await self._device.powerOff()
+        
+        if success:
+            self._hvac_mode = HVACMode.OFF
+            self.async_write_ha_state()
+            _LOGGER.info(f"Successfully turned off HVAC for {self.entity_id}")
+        else:
+            _LOGGER.error(f"Failed to turn off HVAC for {self.entity_id}")
+            self._last_mode_set_time = 0
+            
+    except Exception as exc:
+        _LOGGER.error(f"Exception turning off HVAC for {self.entity_id}: {exc}")
+        self._last_mode_set_time = 0
     finally:
         self._setting_mode = False
 
 async def async_update(self):
-    _LOGGER.info(f"Updating climate entity: {self.entity_id}")
+    """Update entity state with smart polling management."""
+    _LOGGER.debug(f"Updating climate entity: {self.entity_id}")
     
-    # Skip update if we're currently setting values or just set them recently
+    # Skip update if we're currently setting values
     if (self._setting_temperature or self._setting_mode or 
         self._setting_fan or self._setting_swing):
         _LOGGER.debug(f"Skipping update for {self.entity_id} - currently setting values")
@@ -833,13 +701,13 @@ async def async_update(self):
         else:
             _LOGGER.debug(f"Ignoring mode update for {self.entity_id} - recently set")
     else:
-        # Device is off - always update this state
+        # Device is off - only update if we haven't set mode recently
+        if not self._should_ignore_updates("mode"):
+            self._hvac_mode = HVACMode.OFF
         if not self._should_ignore_updates("temp"):
             self._target_temperature = None
             self._target_temperature_high = None
             self._target_temperature_low = None
-        if not self._should_ignore_updates("mode"):
-            self._hvac_mode = HVACMode.OFF
 ```
 
 async def async_setup_entry(
