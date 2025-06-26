@@ -2,13 +2,9 @@
 
 DOMAIN = “mitsubishi_ae200”
 
-# Configuration keys
-
 CONF_CONTROLLER_ID = “controller_id”
-CONF_IP_ADDRESS = “ip_address”  
+CONF_IP_ADDRESS = “ip_address”
 CONF_TEMPERATURE_UNIT = “temperature_unit”
-
-# Default values
 
 DEFAULT_NAME = “AutoH Mitsubishi AE200”
 
