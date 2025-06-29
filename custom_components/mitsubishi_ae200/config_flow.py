@@ -42,47 +42,74 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         try:
+            _LOGGER.info(f"Config flow started with input: {user_input}")
+            
             # Store the initial config
             self.config_data = user_input
             
-            # Import here to avoid circular imports
-            from .mitsubishi_ae200 import MitsubishiAE200Functions
+            # Basic validation
+            if not user_input.get("ip_address"):
+                raise CannotConnect("No IP address provided")
             
-            # Test connection and get devices
-            mitsubishi_ae200_functions = MitsubishiAE200Functions()
+            if not user_input.get("username"):
+                raise InvalidAuth("No username provided")
             
-            # Test authentication
-            auth_success = await mitsubishi_ae200_functions.authenticate(
-                user_input["ip_address"], 
-                user_input["username"], 
-                user_input["password"]
-            )
+            # Try to import and test the connection
+            try:
+                from .mitsubishi_ae200 import MitsubishiAE200Functions
+                _LOGGER.info("Successfully imported MitsubishiAE200Functions")
+                
+                mitsubishi_ae200_functions = MitsubishiAE200Functions()
+                _LOGGER.info("Created MitsubishiAE200Functions instance")
+                
+                # Test authentication
+                _LOGGER.info(f"Testing authentication to {user_input['ip_address']}")
+                auth_success = await mitsubishi_ae200_functions.authenticate(
+                    user_input["ip_address"], 
+                    user_input["username"], 
+                    user_input["password"]
+                )
+                
+                if not auth_success:
+                    _LOGGER.error("Authentication failed")
+                    raise InvalidAuth("Authentication failed")
+                
+                _LOGGER.info("Authentication successful")
+                
+                # Test device discovery
+                _LOGGER.info("Getting device list...")
+                devices = await mitsubishi_ae200_functions.getDevicesAsync(
+                    user_input["ip_address"],
+                    user_input["username"], 
+                    user_input["password"]
+                )
+                
+                _LOGGER.info(f"Found {len(devices)} devices: {devices}")
+                
+                if not devices:
+                    _LOGGER.warning("No devices found")
+                    raise CannotConnect("No devices found")
+                
+                self.discovered_devices = devices
+                
+                # If devices found, go to device naming step
+                return await self.async_step_device_names()
+                
+            except ImportError as e:
+                _LOGGER.error(f"Failed to import mitsubishi_ae200: {e}")
+                raise CannotConnect("Failed to import communication module")
+            except Exception as e:
+                _LOGGER.error(f"Connection test failed: {e}")
+                raise CannotConnect(f"Connection test failed: {str(e)}")
             
-            if not auth_success:
-                raise InvalidAuth("Authentication failed")
-            
-            # Get device list
-            devices = await mitsubishi_ae200_functions.getDevicesAsync(
-                user_input["ip_address"],
-                user_input["username"], 
-                user_input["password"]
-            )
-            
-            if not devices:
-                raise CannotConnect("No devices found")
-            
-            self.discovered_devices = devices
-            _LOGGER.info(f"Discovered {len(devices)} devices: {devices}")
-            
-            # If devices found, go to device naming step
-            return await self.async_step_device_names()
-            
-        except CannotConnect:
+        except CannotConnect as e:
+            _LOGGER.error(f"Cannot connect error: {e}")
             errors["base"] = "cannot_connect"
-        except InvalidAuth:
+        except InvalidAuth as e:
+            _LOGGER.error(f"Invalid auth error: {e}")
             errors["base"] = "invalid_auth"
         except Exception as exc:
-            _LOGGER.exception("Unexpected exception during device discovery")
+            _LOGGER.exception("Unexpected exception during config flow")
             errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -126,6 +153,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Combine all config data
         final_config = {**self.config_data, "device_names": device_names}
 
+        _LOGGER.info("Creating config entry with device names")
         return self.async_create_entry(
             title=f"AutoH Mitsubishi AE200 ({self.config_data['controller_id']})",
             data=final_config
