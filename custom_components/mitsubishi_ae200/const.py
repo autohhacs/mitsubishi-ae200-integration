@@ -2,7 +2,7 @@
 
 DOMAIN = "mitsubishi_ae200"
 
-# Configuration keys
+# Configuration keys  
 CONF_CONTROLLER_ID = "controller_id"
 CONF_IP_ADDRESS = "ip_address"
 CONF_USERNAME = "username"
