@@ -6,7 +6,7 @@
         "description": "Set up your AutoH Mitsubishi AE200 HVAC controller",
         "data": {
           "controller_id": "Controller ID",
-          "ip_address": "IP Address",
+          "ip_address": "IP Address", 
           "username": "Username",
           "password": "Password",
           "temperature_unit": "Temperature Unit"
@@ -15,8 +15,15 @@
           "controller_id": "Unique identifier for this controller",
           "ip_address": "IP address of the AE200 controller",
           "username": "Username for AE200 controller authentication",
-          "password": "Password for AE200 controller authentication",
+          "password": "Password for AE200 controller authentication", 
           "temperature_unit": "Choose temperature unit for display"
+        }
+      },
+      "device_names": {
+        "title": "Configure Device Names",
+        "description": "Found {device_count} devices. You can customize the names for each device.\n\nDiscovered devices: {devices}",
+        "data_description": {
+          "device_*_name": "Custom name for this device (leave default if you like the current name)"
         }
       }
     },
@@ -27,16 +34,6 @@
     },
     "abort": {
       "already_configured": "Device is already configured"
-    }
-  },
-  "options": {
-    "step": {
-      "init": {
-        "title": "AutoH Mitsubishi AE200 Options",
-        "data": {
-          "temperature_unit": "Temperature Unit"
-        }
-      }
     }
   }
 }
