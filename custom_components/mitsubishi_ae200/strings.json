@@ -7,18 +7,22 @@
         "data": {
           "controller_id": "Controller ID",
           "ip_address": "IP Address",
+          "username": "Username",
+          "password": "Password",
           "temperature_unit": "Temperature Unit"
         },
         "data_description": {
           "controller_id": "Unique identifier for this controller",
           "ip_address": "IP address of the AE200 controller",
+          "username": "Username for AE200 controller authentication",
+          "password": "Password for AE200 controller authentication",
           "temperature_unit": "Choose temperature unit for display"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to the controller",
-      "invalid_auth": "Invalid authentication",
+      "invalid_auth": "Invalid authentication credentials",
       "unknown": "Unexpected error occurred"
     },
     "abort": {
