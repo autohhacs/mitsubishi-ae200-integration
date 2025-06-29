@@ -325,4 +325,101 @@ class AE200Climate(ClimateEntity):
         try:
             if hvac_mode == HVACMode.OFF:
                 await self._device.powerOff()
-                self._hvac_mode
+                self._hvac_mode = HVACMode.OFF
+            else:
+                await self._device.powerOn()
+                mode_map = {
+                    HVACMode.HEAT: Mode.Heat,
+                    HVACMode.COOL: Mode.Cool,
+                    HVACMode.DRY: Mode.Dry,
+                    HVACMode.FAN_ONLY: Mode.Fan,
+                    HVACMode.HEAT_COOL: Mode.Auto,
+                }
+                await self._device.setMode(mode_map.get(hvac_mode, Mode.Auto))
+                self._hvac_mode = hvac_mode
+                self._last_hvac_mode = hvac_mode
+            self.async_write_ha_state()
+        except Exception as e:
+            _LOGGER.error(f"Failed to set HVAC mode for {self.name}: {e}")
+
+    async def async_update(self):
+        """Update the entity state."""
+        _LOGGER.debug(f"Updating climate entity: {self.name}")
+        try:
+            self._current_temperature = await self._device.getRoomTemperature()
+            
+            if await self._device.isPowerOn():
+                self._target_temperature = await self._device.getTargetTemperature()
+                mode = await self._device.getMode()
+                
+                if mode == Mode.Heat:
+                    self._hvac_mode = HVACMode.HEAT
+                    self._last_hvac_mode = HVACMode.HEAT
+                elif mode == Mode.Cool:
+                    self._hvac_mode = HVACMode.COOL
+                    self._last_hvac_mode = HVACMode.COOL
+                elif mode == Mode.Dry:
+                    self._hvac_mode = HVACMode.DRY
+                    self._last_hvac_mode = HVACMode.DRY
+                elif mode == Mode.Fan:
+                    self._hvac_mode = HVACMode.FAN_ONLY
+                    self._last_hvac_mode = HVACMode.FAN_ONLY
+                    self._target_temperature = None
+                elif mode == Mode.Auto:
+                    self._hvac_mode = HVACMode.HEAT_COOL
+                    self._last_hvac_mode = HVACMode.HEAT_COOL
+                else:
+                    self._hvac_mode = HVACMode.HEAT_COOL
+                    self._last_hvac_mode = HVACMode.HEAT_COOL
+            else:
+                self._target_temperature = None
+                self._hvac_mode = HVACMode.OFF
+        except Exception as e:
+            _LOGGER.error(f"Failed to update entity {self.name}: {e}")
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up AutoH Mitsubishi AE200 climate devices from config entry."""
+    _LOGGER.info("Setting up AutoH Mitsubishi AE200 platform...")
+
+    config = hass.data[DOMAIN][config_entry.entry_id]
+    controllerid = config[CONF_CONTROLLER_ID]
+    ipaddress = config[CONF_IP_ADDRESS]
+    username = config[CONF_USERNAME]
+    password = config[CONF_PASSWORD]
+    use_fahrenheit = config.get(CONF_TEMPERATURE_UNIT) == TEMP_FAHRENHEIT
+    device_names = config.get("device_names", {})
+
+    mitsubishi_ae200_functions = MitsubishiAE200Functions()
+    devices = []
+    
+    try:
+        _LOGGER.info(f"Discovering devices on controller {ipaddress}...")
+        
+        # Get device list from controller
+        group_list = await mitsubishi_ae200_functions.getDevicesAsync(ipaddress, username, password)
+        _LOGGER.info(f"Found {len(group_list)} devices: {group_list}")
+        
+        for group in group_list:
+            device_id = group["id"]
+            # Use custom name if provided, otherwise use original name
+            device_name = device_names.get(device_id, group["name"])
+            
+            _LOGGER.info(f"Creating device: ID={device_id}, Name={device_name}")
+            
+            device = AE200Device(ipaddress, device_id, device_name, mitsubishi_ae200_functions, username, password)
+            climate_entity = AE200Climate(hass, device, controllerid, use_fahrenheit)
+            devices.append(climate_entity)
+
+        if devices:
+            async_add_entities(devices, update_before_add=True)
+            _LOGGER.info(f"Successfully added {len(devices)} AutoH Mitsubishi AE200 device(s).")
+        else:
+            _LOGGER.warning("No AutoH Mitsubishi AE200 devices found on controller.")
+            
+    except Exception as exc:
+        _LOGGER.error("Error setting up AutoH Mitsubishi AE200 devices: %s", exc, exc_info=True)
