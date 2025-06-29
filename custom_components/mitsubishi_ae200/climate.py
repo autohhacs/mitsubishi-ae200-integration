@@ -65,7 +65,7 @@ class AE200Device:
         self._password = password
         self._attributes = {}
         self._last_info_time_s = 0
-        self._info_lease_seconds = 30  # Increased to reduce polling
+        self._info_lease_seconds = 30
 
     async def _refresh_device_info_async(self):
         """Refresh device information from the controller."""
@@ -78,7 +78,6 @@ class AE200Device:
             _LOGGER.debug(f"Device {self._deviceid} attributes: {self._attributes}")
         except Exception as e:
             _LOGGER.error(f"Failed to refresh device info for {self._deviceid}: {e}")
-            # Don't raise exception, just log error and continue with cached data
 
     async def _get_info(self, key, default_value):
         """Get device information, refreshing if needed."""
@@ -94,9 +93,6 @@ class AE200Device:
         except (ValueError, TypeError):
             return None
 
-    async def getID(self):
-        return self._deviceid
-
     def getName(self):
         return self._name
 
@@ -109,26 +105,9 @@ class AE200Device:
             elif mode in [Mode.Cool, Mode.Dry]:
                 return await self._to_float(await self._get_info("SetTemp1", None))
             else:
-                # For Auto mode, return the cooling setpoint as primary
                 return await self._to_float(await self._get_info("SetTemp1", None))
         except Exception as e:
             _LOGGER.error(f"Error getting target temperature for device {self._deviceid}: {e}")
-            return None
-        
-    async def getTargetTemperatureHigh(self):
-        """Get high temperature setpoint (cooling)."""
-        try:
-            return await self._to_float(await self._get_info("SetTemp1", None))
-        except Exception as e:
-            _LOGGER.error(f"Error getting high temperature for device {self._deviceid}: {e}")
-            return None
-    
-    async def getTargetTemperatureLow(self):
-        """Get low temperature setpoint (heating)."""
-        try:
-            return await self._to_float(await self._get_info("SetTemp2", None))
-        except Exception as e:
-            _LOGGER.error(f"Error getting low temperature for device {self._deviceid}: {e}")
             return None
 
     async def getRoomTemperature(self):
@@ -137,22 +116,6 @@ class AE200Device:
             return await self._to_float(await self._get_info("InletTemp", None))
         except Exception as e:
             _LOGGER.error(f"Error getting room temperature for device {self._deviceid}: {e}")
-            return None
-
-    async def getFanSpeed(self):
-        """Get current fan speed."""
-        try:
-            return await self._get_info("FanSpeed", None)
-        except Exception as e:
-            _LOGGER.error(f"Error getting fan speed for device {self._deviceid}: {e}")
-            return None
-    
-    async def getSwingMode(self):
-        """Get current swing/air direction mode."""
-        try:
-            return await self._get_info("AirDirection", None)
-        except Exception as e:
-            _LOGGER.error(f"Error getting swing mode for device {self._deviceid}: {e}")
             return None
 
     async def getMode(self):
@@ -176,21 +139,20 @@ class AE200Device:
         """Set target temperature based on current mode."""
         try:
             mode = await self.getMode()
-            temp_str = str(int(round(temperature)))  # Round to nearest integer
+            temp_str = str(int(round(temperature)))
             
             if mode == Mode.Heat:
                 await self._mitsubishi_ae200_functions.sendAsync(
                     self._ipaddress, self._deviceid, {"SetTemp2": temp_str}, 
                     self._username, self._password
                 )
-            else:  # Cool, Dry, or other modes
+            else:
                 await self._mitsubishi_ae200_functions.sendAsync(
                     self._ipaddress, self._deviceid, {"SetTemp1": temp_str}, 
                     self._username, self._password
                 )
             _LOGGER.info(f"Set temperature to {temperature}°C for device {self._deviceid} in {mode} mode")
-            # Clear cache to force refresh on next read
-            self._last_info_time_s = 0
+            self._last_info_time_s = 0  # Force refresh
         except Exception as e:
             _LOGGER.error(f"Failed to set temperature for device {self._deviceid}: {e}")
             raise
@@ -203,8 +165,7 @@ class AE200Device:
                 self._username, self._password
             )
             _LOGGER.info(f"Set mode to {mode} for device {self._deviceid}")
-            # Clear cache to force refresh on next read
-            self._last_info_time_s = 0
+            self._last_info_time_s = 0  # Force refresh
         except Exception as e:
             _LOGGER.error(f"Failed to set mode for device {self._deviceid}: {e}")
             raise
@@ -217,8 +178,7 @@ class AE200Device:
                 self._username, self._password
             )
             _LOGGER.info(f"Powered on device {self._deviceid}")
-            # Clear cache to force refresh on next read
-            self._last_info_time_s = 0
+            self._last_info_time_s = 0  # Force refresh
         except Exception as e:
             _LOGGER.error(f"Failed to power on device {self._deviceid}: {e}")
             raise
@@ -231,8 +191,7 @@ class AE200Device:
                 self._username, self._password
             )
             _LOGGER.info(f"Powered off device {self._deviceid}")
-            # Clear cache to force refresh on next read
-            self._last_info_time_s = 0
+            self._last_info_time_s = 0  # Force refresh
         except Exception as e:
             _LOGGER.error(f"Failed to power off device {self._deviceid}: {e}")
             raise
@@ -267,12 +226,10 @@ class AE200Climate(ClimateEntity):
 
     @property
     def unique_id(self):
-        """Return unique ID for this entity."""
         return self._attr_unique_id
 
     @property
     def name(self):
-        """Return the name of the climate entity."""
         return self._attr_name
 
     @property
@@ -337,7 +294,6 @@ class AE200Climate(ClimateEntity):
         if temperature is not None:
             _LOGGER.info(f"Setting temperature: {temperature} for {self.name}")
             try:
-                # Convert to Celsius for device communication
                 temp_celsius = fahrenheit_to_celsius(temperature) if self._use_fahrenheit else temperature
                 await self._device.setTemperature(temp_celsius)
                 self._target_temperature = temp_celsius
@@ -418,6 +374,7 @@ async def async_setup_entry(
     username = config[CONF_USERNAME]
     password = config[CONF_PASSWORD]
     use_fahrenheit = config.get(CONF_TEMPERATURE_UNIT) == TEMP_FAHRENHEIT
+    device_names = config.get("device_names", {})
 
     mitsubishi_ae200_functions = MitsubishiAE200Functions()
     devices = []
@@ -431,7 +388,9 @@ async def async_setup_entry(
         
         for group in group_list:
             device_id = group["id"]
-            device_name = group["name"]
+            # Use custom name if provided, otherwise use original name
+            device_name = device_names.get(device_id, group["name"])
+            
             _LOGGER.info(f"Creating device: ID={device_id}, Name={device_name}")
             
             device = AE200Device(ipaddress, device_id, device_name, mitsubishi_ae200_functions, username, password)
