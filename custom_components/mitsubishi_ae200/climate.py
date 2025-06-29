@@ -1,4 +1,4 @@
-"""Simple fix focusing on temperature setting commands."""
+"""Simple working climate platform - back to basics."""
 import logging
 import asyncio
 
@@ -25,234 +25,36 @@ from .mitsubishi_ae200 import MitsubishiAE200Functions
 
 _LOGGER = logging.getLogger(__name__)
 
-MIN_TEMP_C = 16
-MAX_TEMP_C = 30
-MIN_TEMP_F = 61
-MAX_TEMP_F = 86
-
-
-class Mode:
-    Heat = "HEAT"
-    Dry = "DRY"
-    Cool = "COOL"
-    Fan = "FAN"
-    Auto = "AUTO"
-
-
-class AE200Device:
-    def __init__(self, ipaddress: str, deviceid: str, name: str, 
+class AE200Climate(ClimateEntity):
+    def __init__(self, hass, ipaddress: str, deviceid: str, name: str, 
                  mitsubishi_ae200_functions: MitsubishiAE200Functions, 
-                 username: str, password: str):
+                 username: str, password: str, controllerid: str):
+        # Basic setup
         self._ipaddress = ipaddress
         self._deviceid = deviceid
-        self._name = name
-        self._mitsubishi_ae200_functions = mitsubishi_ae200_functions
+        self._device_name = name
+        self._functions = mitsubishi_ae200_functions
         self._username = username
         self._password = password
-        self._attributes = {}
-        self._last_info_time_s = 0
-        self._info_lease_seconds = 10
-
-    async def _refresh_device_info_async(self):
-        try:
-            self._attributes = await self._mitsubishi_ae200_functions.getDeviceInfoAsync(
-                self._ipaddress, self._deviceid, self._username, self._password
-            )
-            self._last_info_time_s = asyncio.get_event_loop().time()
-            _LOGGER.info(f"📊 {self._name} - Current device state:")
-            _LOGGER.info(f"   Drive: {self._attributes.get('Drive', 'N/A')}")
-            _LOGGER.info(f"   Mode: {self._attributes.get('Mode', 'N/A')}")
-            _LOGGER.info(f"   SetTemp1 (Cool): {self._attributes.get('SetTemp1', 'N/A')}")
-            _LOGGER.info(f"   SetTemp2 (Heat): {self._attributes.get('SetTemp2', 'N/A')}")
-            _LOGGER.info(f"   InletTemp: {self._attributes.get('InletTemp', 'N/A')}")
-        except Exception as e:
-            _LOGGER.error(f"❌ Failed to refresh {self._name}: {e}")
-            raise
-
-    async def _get_info(self, key, default_value):
-        current_time = asyncio.get_event_loop().time()
-        if not self._attributes or (current_time - self._last_info_time_s) > self._info_lease_seconds:
-            await self._refresh_device_info_async()
-        return self._attributes.get(key, default_value)
-
-    async def _to_float(self, value):
-        try:
-            return float(value) if value is not None and str(value).strip() != "" else None
-        except (ValueError, TypeError):
-            return None
-
-    def getName(self):
-        return self._name
-
-    async def getRoomTemperature(self):
-        try:
-            temp = await self._to_float(await self._get_info("InletTemp", None))
-            return temp
-        except Exception as e:
-            _LOGGER.error(f"❌ Error getting room temp for {self._name}: {e}")
-            return None
-
-    async def getTargetTemperature(self):
-        try:
-            mode = await self.getMode()
-            if mode == Mode.Heat:
-                temp = await self._to_float(await self._get_info("SetTemp2", None))
-            else:
-                temp = await self._to_float(await self._get_info("SetTemp1", None))
-            return temp
-        except Exception as e:
-            _LOGGER.error(f"❌ Error getting target temp for {self._name}: {e}")
-            return None
-
-    async def getMode(self):
-        try:
-            return await self._get_info("Mode", Mode.Auto)
-        except Exception as e:
-            _LOGGER.error(f"❌ Error getting mode for {self._name}: {e}")
-            return Mode.Auto
-
-    async def isPowerOn(self):
-        try:
-            drive_status = await self._get_info("Drive", "OFF")
-            return drive_status == "ON"
-        except Exception as e:
-            _LOGGER.error(f"❌ Error getting power status for {self._name}: {e}")
-            return False
-
-    async def setTemperature(self, temperature):
-        """Set target temperature - ENHANCED DEBUGGING."""
-        try:
-            _LOGGER.info(f"🌡️ === TEMPERATURE SETTING DEBUG FOR {self._name} ===")
-            
-            # Get current state first
-            await self._refresh_device_info_async()
-            mode = await self.getMode()
-            is_on = await self.isPowerOn()
-            
-            _LOGGER.info(f"   Requested temperature: {temperature}")
-            _LOGGER.info(f"   Current mode: {mode}")
-            _LOGGER.info(f"   Power status: {is_on}")
-            
-            if not is_on:
-                _LOGGER.warning("⚠️ Device is OFF - turning it ON first")
-                await self.powerOn()
-                await asyncio.sleep(2)
-            
-            # Determine which temperature field to use
-            if mode == Mode.Heat:
-                temp_field = "SetTemp2"
-                _LOGGER.info(f"🔥 Using HEATING field: {temp_field}")
-            else:
-                temp_field = "SetTemp1"
-                _LOGGER.info(f"❄️ Using COOLING field: {temp_field}")
-            
-            # Convert to integer (device expects whole numbers)
-            temp_int = int(round(temperature))
-            
-            # Try multiple command formats to see which works
-            commands_to_try = [
-                {temp_field: str(temp_int)},           # "22"
-                {temp_field: temp_int},                # 22
-                {temp_field: f"{temp_int}.0"},         # "22.0"
-            ]
-            
-            for i, command in enumerate(commands_to_try, 1):
-                try:
-                    _LOGGER.info(f"📤 Attempt {i}: Sending {command}")
-                    
-                    await self._mitsubishi_ae200_functions.sendAsync(
-                        self._ipaddress, self._deviceid, command, 
-                        self._username, self._password
-                    )
-                    
-                    _LOGGER.info(f"✅ Command {i} sent successfully")
-                    
-                    # Wait and check if it worked
-                    await asyncio.sleep(3)
-                    await self._refresh_device_info_async()
-                    
-                    new_temp = await self.getTargetTemperature()
-                    _LOGGER.info(f"🔍 After command {i}: Target temp is now {new_temp}")
-                    
-                    if new_temp and abs(new_temp - temp_int) < 1:
-                        _LOGGER.info(f"🎉 SUCCESS! Command {i} worked!")
-                        return
-                    else:
-                        _LOGGER.warning(f"⚠️ Command {i} didn't work as expected")
-                        
-                except Exception as e:
-                    _LOGGER.error(f"❌ Command {i} failed: {e}")
-            
-            _LOGGER.error(f"❌ All temperature setting attempts failed for {self._name}")
-            
-        except Exception as e:
-            _LOGGER.error(f"❌ Temperature setting error for {self._name}: {e}")
-            raise
-
-    async def setMode(self, mode):
-        try:
-            _LOGGER.info(f"🔧 Setting mode for {self._name}: {mode}")
-            await self._mitsubishi_ae200_functions.sendAsync(
-                self._ipaddress, self._deviceid, {"Mode": mode}, 
-                self._username, self._password
-            )
-            self._last_info_time_s = 0
-        except Exception as e:
-            _LOGGER.error(f"❌ Failed to set mode for {self._name}: {e}")
-            raise
-
-    async def powerOn(self):
-        try:
-            _LOGGER.info(f"⚡ Powering ON {self._name}")
-            await self._mitsubishi_ae200_functions.sendAsync(
-                self._ipaddress, self._deviceid, {"Drive": "ON"}, 
-                self._username, self._password
-            )
-            self._last_info_time_s = 0
-        except Exception as e:
-            _LOGGER.error(f"❌ Failed to power on {self._name}: {e}")
-            raise
-
-    async def powerOff(self):
-        try:
-            _LOGGER.info(f"⚡ Powering OFF {self._name}")
-            await self._mitsubishi_ae200_functions.sendAsync(
-                self._ipaddress, self._deviceid, {"Drive": "OFF"}, 
-                self._username, self._password
-            )
-            self._last_info_time_s = 0
-        except Exception as e:
-            _LOGGER.error(f"❌ Failed to power off {self._name}: {e}")
-            raise
-
-
-class AE200Climate(ClimateEntity):
-    def __init__(self, hass, device: AE200Device, controllerid: str, ipaddress: str, use_fahrenheit: bool = False):
-        self._device = device
-        self._use_fahrenheit = use_fahrenheit
-        ip_suffix = ipaddress.replace(".", "_").replace(":", "_")
-        self._attr_unique_id = f"mitsubishi_ae200_{controllerid}_{ip_suffix}_{device._deviceid}"
-        self._attr_name = f"AutoH {device.getName()}"
         
-        self._attr_hvac_modes = [
-            HVACMode.OFF,
-            HVACMode.HEAT,
-            HVACMode.COOL,
-            HVACMode.DRY,
-            HVACMode.FAN_ONLY,
-            HVACMode.HEAT_COOL,
-        ]
+        # Entity properties
+        ip_suffix = ipaddress.replace(".", "_")
+        self._attr_unique_id = f"mitsubishi_ae200_{controllerid}_{ip_suffix}_{deviceid}"
+        self._attr_name = f"AutoH {name}"
         
-        self._attr_supported_features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE | 
-            ClimateEntityFeature.TURN_ON |
-            ClimateEntityFeature.TURN_OFF
-        )
-        self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT if use_fahrenheit else UnitOfTemperature.CELSIUS
+        # Climate properties
+        self._attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
+        self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO]
+        self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+        
+        # State variables
         self._current_temperature = None
         self._target_temperature = None
         self._hvac_mode = HVACMode.OFF
-        self._last_hvac_mode = HVACMode.COOL
+        self._is_on = False
+        self._device_data = {}
+        
+        _LOGGER.info(f"Created simple climate entity: {self._attr_name}")
 
     @property
     def unique_id(self):
@@ -275,14 +77,6 @@ class AE200Climate(ClimateEntity):
         return self._target_temperature
 
     @property
-    def min_temp(self):
-        return MIN_TEMP_F if self._use_fahrenheit else MIN_TEMP_C
-
-    @property
-    def max_temp(self):
-        return MAX_TEMP_F if self._use_fahrenheit else MAX_TEMP_C
-
-    @property
     def hvac_mode(self):
         return self._hvac_mode
 
@@ -298,85 +92,201 @@ class AE200Climate(ClimateEntity):
     def should_poll(self):
         return True
 
-    async def async_set_temperature(self, **kwargs):
-        """Set temperature with enhanced debugging."""
-        temperature = kwargs.get(ATTR_TEMPERATURE)
-        if temperature is not None:
-            _LOGGER.info(f"🌡️ HOME ASSISTANT: Setting {self.name} to {temperature}°F")
-            try:
-                await self._device.setTemperature(temperature)
-                self._target_temperature = temperature  # Update local state
-                self.async_write_ha_state()
-            except Exception as e:
-                _LOGGER.error(f"❌ Failed to set temperature: {e}")
+    @property
+    def min_temp(self):
+        return 60
 
-    async def async_set_hvac_mode(self, hvac_mode):
+    @property
+    def max_temp(self):
+        return 85
+
+    async def _get_device_data(self):
+        """Get raw data from device."""
         try:
-            if hvac_mode == HVACMode.OFF:
-                await self._device.powerOff()
-                self._hvac_mode = HVACMode.OFF
-            else:
-                await self._device.powerOn()
-                mode_map = {
-                    HVACMode.HEAT: Mode.Heat,
-                    HVACMode.COOL: Mode.Cool,
-                    HVACMode.DRY: Mode.Dry,
-                    HVACMode.FAN_ONLY: Mode.Fan,
-                    HVACMode.HEAT_COOL: Mode.Auto,
-                }
-                await self._device.setMode(mode_map.get(hvac_mode, Mode.Auto))
-                self._hvac_mode = hvac_mode
-                self._last_hvac_mode = hvac_mode
-            self.async_write_ha_state()
+            _LOGGER.info(f"Getting device data for {self._device_name}")
+            self._device_data = await self._functions.getDeviceInfoAsync(
+                self._ipaddress, self._deviceid, self._username, self._password
+            )
+            _LOGGER.info(f"Device {self._device_name} raw data: {self._device_data}")
+            return True
         except Exception as e:
-            _LOGGER.error(f"❌ Failed to set HVAC mode: {e}")
+            _LOGGER.error(f"Failed to get device data for {self._device_name}: {e}")
+            return False
 
     async def async_update(self):
-        try:
-            self._current_temperature = await self._device.getRoomTemperature()
+        """Update the entity."""
+        _LOGGER.info(f"Updating {self._device_name}")
+        
+        if not await self._get_device_data():
+            return
             
-            if await self._device.isPowerOn():
-                self._target_temperature = await self._device.getTargetTemperature()
-                mode = await self._device.getMode()
-                
-                if mode == Mode.Heat:
-                    self._hvac_mode = HVACMode.HEAT
-                    self._last_hvac_mode = HVACMode.HEAT
-                elif mode == Mode.Cool:
-                    self._hvac_mode = HVACMode.COOL
-                    self._last_hvac_mode = HVACMode.COOL
-                elif mode == Mode.Dry:
-                    self._hvac_mode = HVACMode.DRY
-                    self._last_hvac_mode = HVACMode.DRY
-                elif mode == Mode.Fan:
-                    self._hvac_mode = HVACMode.FAN_ONLY
-                    self._last_hvac_mode = HVACMode.FAN_ONLY
-                    self._target_temperature = None
-                elif mode == Mode.Auto:
-                    self._hvac_mode = HVACMode.HEAT_COOL
-                    self._last_hvac_mode = HVACMode.HEAT_COOL
+        try:
+            # Get power status
+            drive = self._device_data.get("Drive", "OFF")
+            self._is_on = (drive == "ON")
+            _LOGGER.info(f"{self._device_name} - Drive: {drive}, Is On: {self._is_on}")
+            
+            # Get temperatures - try both Celsius and Fahrenheit interpretation
+            inlet_temp_raw = self._device_data.get("InletTemp")
+            settemp1_raw = self._device_data.get("SetTemp1")
+            settemp2_raw = self._device_data.get("SetTemp2")
+            mode_raw = self._device_data.get("Mode", "AUTO")
+            
+            _LOGGER.info(f"{self._device_name} - Raw temps: Inlet={inlet_temp_raw}, SetTemp1={settemp1_raw}, SetTemp2={settemp2_raw}, Mode={mode_raw}")
+            
+            # Convert temperatures
+            if inlet_temp_raw:
+                inlet_temp = float(inlet_temp_raw)
+                # If value is < 50, assume it's Celsius and convert to Fahrenheit
+                if inlet_temp < 50:
+                    self._current_temperature = round((inlet_temp * 9/5) + 32)
+                    _LOGGER.info(f"{self._device_name} - Converted current temp: {inlet_temp}°C -> {self._current_temperature}°F")
+                else:
+                    self._current_temperature = round(inlet_temp)
+                    _LOGGER.info(f"{self._device_name} - Current temp (already F): {self._current_temperature}°F")
+            
+            # Set target temperature based on mode
+            if self._is_on:
+                if mode_raw == "HEAT" and settemp2_raw:
+                    target_raw = float(settemp2_raw)
+                elif settemp1_raw:
+                    target_raw = float(settemp1_raw)
+                else:
+                    target_raw = None
+                    
+                if target_raw:
+                    # If value is < 50, assume it's Celsius and convert to Fahrenheit
+                    if target_raw < 50:
+                        self._target_temperature = round((target_raw * 9/5) + 32)
+                        _LOGGER.info(f"{self._device_name} - Converted target temp: {target_raw}°C -> {self._target_temperature}°F")
+                    else:
+                        self._target_temperature = round(target_raw)
+                        _LOGGER.info(f"{self._device_name} - Target temp (already F): {self._target_temperature}°F")
             else:
                 self._target_temperature = None
+            
+            # Set HVAC mode
+            if not self._is_on:
                 self._hvac_mode = HVACMode.OFF
+            elif mode_raw == "HEAT":
+                self._hvac_mode = HVACMode.HEAT
+            elif mode_raw == "COOL":
+                self._hvac_mode = HVACMode.COOL
+            else:
+                self._hvac_mode = HVACMode.AUTO
                 
+            _LOGGER.info(f"{self._device_name} - Final state: Current={self._current_temperature}°F, Target={self._target_temperature}°F, Mode={self._hvac_mode}")
+            
         except Exception as e:
-            _LOGGER.error(f"❌ Failed to update {self.name}: {e}")
+            _LOGGER.error(f"Error updating {self._device_name}: {e}")
+
+    async def async_set_temperature(self, **kwargs):
+        """Set target temperature."""
+        temperature = kwargs.get(ATTR_TEMPERATURE)
+        if temperature is None:
+            return
+            
+        _LOGGER.info(f"Setting {self._device_name} temperature to {temperature}°F")
+        
+        try:
+            # Get current mode to determine which temperature field to set
+            if not await self._get_device_data():
+                return
+                
+            mode = self._device_data.get("Mode", "COOL")
+            
+            # Convert Fahrenheit to what the device expects
+            # Try both Celsius and Fahrenheit
+            temp_celsius = round((temperature - 32) * 5/9)
+            temp_fahrenheit = round(temperature)
+            
+            _LOGGER.info(f"{self._device_name} - Trying to set: {temperature}°F as Celsius={temp_celsius} or Fahrenheit={temp_fahrenheit}")
+            
+            # Try Celsius first (most likely)
+            try:
+                if mode == "HEAT":
+                    command = {"SetTemp2": str(temp_celsius)}
+                else:
+                    command = {"SetTemp1": str(temp_celsius)}
+                    
+                _LOGGER.info(f"{self._device_name} - Sending Celsius command: {command}")
+                await self._functions.sendAsync(self._ipaddress, self._deviceid, command, self._username, self._password)
+                
+                # Wait and check if it worked
+                await asyncio.sleep(3)
+                if await self._get_device_data():
+                    new_temp_raw = self._device_data.get("SetTemp1" if mode != "HEAT" else "SetTemp2")
+                    if new_temp_raw and abs(float(new_temp_raw) - temp_celsius) <= 1:
+                        _LOGGER.info(f"{self._device_name} - Celsius command worked! Device now shows {new_temp_raw}")
+                        self._target_temperature = temperature
+                        return
+                        
+            except Exception as e:
+                _LOGGER.warning(f"{self._device_name} - Celsius command failed: {e}")
+            
+            # If Celsius didn't work, try Fahrenheit
+            try:
+                if mode == "HEAT":
+                    command = {"SetTemp2": str(temp_fahrenheit)}
+                else:
+                    command = {"SetTemp1": str(temp_fahrenheit)}
+                    
+                _LOGGER.info(f"{self._device_name} - Sending Fahrenheit command: {command}")
+                await self._functions.sendAsync(self._ipaddress, self._deviceid, command, self._username, self._password)
+                
+                # Wait and check if it worked
+                await asyncio.sleep(3)
+                if await self._get_device_data():
+                    new_temp_raw = self._device_data.get("SetTemp1" if mode != "HEAT" else "SetTemp2")
+                    if new_temp_raw and abs(float(new_temp_raw) - temp_fahrenheit) <= 1:
+                        _LOGGER.info(f"{self._device_name} - Fahrenheit command worked! Device now shows {new_temp_raw}")
+                        self._target_temperature = temperature
+                        return
+                        
+            except Exception as e:
+                _LOGGER.warning(f"{self._device_name} - Fahrenheit command failed: {e}")
+                
+            _LOGGER.error(f"{self._device_name} - Both temperature setting attempts failed")
+            
+        except Exception as e:
+            _LOGGER.error(f"Error setting temperature for {self._device_name}: {e}")
+
+    async def async_set_hvac_mode(self, hvac_mode):
+        """Set HVAC mode."""
+        _LOGGER.info(f"Setting {self._device_name} HVAC mode to {hvac_mode}")
+        
+        try:
+            if hvac_mode == HVACMode.OFF:
+                await self._functions.sendAsync(self._ipaddress, self._deviceid, {"Drive": "OFF"}, self._username, self._password)
+                self._hvac_mode = HVACMode.OFF
+                self._is_on = False
+            else:
+                # Turn on first
+                await self._functions.sendAsync(self._ipaddress, self._deviceid, {"Drive": "ON"}, self._username, self._password)
+                
+                # Set mode
+                if hvac_mode == HVACMode.HEAT:
+                    await self._functions.sendAsync(self._ipaddress, self._deviceid, {"Mode": "HEAT"}, self._username, self._password)
+                elif hvac_mode == HVACMode.COOL:
+                    await self._functions.sendAsync(self._ipaddress, self._deviceid, {"Mode": "COOL"}, self._username, self._password)
+                else:
+                    await self._functions.sendAsync(self._ipaddress, self._deviceid, {"Mode": "AUTO"}, self._username, self._password)
+                
+                self._hvac_mode = hvac_mode
+                self._is_on = True
+                
+            self.async_write_ha_state()
+            
+        except Exception as e:
+            _LOGGER.error(f"Error setting HVAC mode for {self._device_name}: {e}")
 
     async def async_turn_on(self):
-        try:
-            await self._device.powerOn()
-            self._hvac_mode = self._last_hvac_mode
-            self.async_write_ha_state()
-        except Exception as e:
-            _LOGGER.error(f"❌ Failed to turn on: {e}")
+        """Turn the entity on."""
+        await self.async_set_hvac_mode(HVACMode.AUTO)
 
     async def async_turn_off(self):
-        try:
-            await self._device.powerOff()
-            self._hvac_mode = HVACMode.OFF
-            self.async_write_ha_state()
-        except Exception as e:
-            _LOGGER.error(f"❌ Failed to turn off: {e}")
+        """Turn the entity off."""
+        await self.async_set_hvac_mode(HVACMode.OFF)
 
 
 async def async_setup_entry(
@@ -385,31 +295,38 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up climate devices."""
+    _LOGGER.info("Setting up simple climate entities")
+    
     config = hass.data[DOMAIN][config_entry.entry_id]
-    controllerid = config[CONF_CONTROLLER_ID]
-    ipaddress = config[CONF_IP_ADDRESS]
-    username = config[CONF_USERNAME]
-    password = config[CONF_PASSWORD]
-    use_fahrenheit = config.get(CONF_TEMPERATURE_UNIT) == TEMP_FAHRENHEIT
-    device_names = config.get("device_names", {})
+    controllerid = config["controller_id"]  # Use string keys instead of constants
+    ipaddress = config["ip_address"]
+    username = config["username"]
+    password = config["password"]
 
     mitsubishi_ae200_functions = MitsubishiAE200Functions()
     devices = []
     
     try:
         group_list = await mitsubishi_ae200_functions.getDevicesAsync(ipaddress, username, password)
+        _LOGGER.info(f"Found devices: {group_list}")
         
         for group in group_list:
             device_id = group["id"]
-            device_name = device_names.get(device_id, group["name"])
+            device_name = group["name"]  # Use original name for now
             
-            device = AE200Device(ipaddress, device_id, device_name, mitsubishi_ae200_functions, username, password)
-            climate_entity = AE200Climate(hass, device, controllerid, ipaddress, use_fahrenheit)
+            _LOGGER.info(f"Creating simple climate entity: {device_id} -> {device_name}")
+            
+            climate_entity = AE200Climate(
+                hass, ipaddress, device_id, device_name, 
+                mitsubishi_ae200_functions, username, password, controllerid
+            )
             devices.append(climate_entity)
 
         if devices:
             async_add_entities(devices, update_before_add=True)
-            _LOGGER.info(f"✅ Added {len(devices)} devices")
+            _LOGGER.info(f"Added {len(devices)} simple climate entities")
+        else:
+            _LOGGER.warning("No devices found during setup")
             
     except Exception as exc:
-        _LOGGER.error(f"❌ Setup error: {exc}", exc_info=True)
+        _LOGGER.error(f"Setup error: {exc}", exc_info=True)
