@@ -18,13 +18,6 @@
           "password": "Password for AE200 controller authentication", 
           "temperature_unit": "Choose temperature unit for display"
         }
-      },
-      "device_names": {
-        "title": "Configure Device Names",
-        "description": "Found {device_count} devices. You can customize the names for each device.\n\nDiscovered devices: {devices}",
-        "data_description": {
-          "device_*_name": "Custom name for this device (leave default if you like the current name)"
-        }
       }
     },
     "error": {
