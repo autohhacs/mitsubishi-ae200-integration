@@ -205,11 +205,13 @@ class AE200Device:
 class AE200Climate(ClimateEntity):
     """Representation of an AE200 climate device."""
 
-    def __init__(self, hass, device: AE200Device, controllerid: str, use_fahrenheit: bool = False):
+    def __init__(self, hass, device: AE200Device, controllerid: str, ipaddress: str, use_fahrenheit: bool = False):
         """Initialize the climate entity."""
         self._device = device
         self._use_fahrenheit = use_fahrenheit
-        self._attr_unique_id = f"mitsubishi_ae200_{controllerid}_{device._deviceid}"
+        # Create unique ID using IP address to avoid conflicts between controllers
+        ip_suffix = ipaddress.replace(".", "_").replace(":", "_")
+        self._attr_unique_id = f"mitsubishi_ae200_{controllerid}_{ip_suffix}_{device._deviceid}"
         self._attr_name = f"AutoH {device.getName()}"
         
         self._attr_hvac_modes = [
@@ -412,7 +414,7 @@ async def async_setup_entry(
             _LOGGER.info(f"Creating device: ID={device_id}, Name={device_name}")
             
             device = AE200Device(ipaddress, device_id, device_name, mitsubishi_ae200_functions, username, password)
-            climate_entity = AE200Climate(hass, device, controllerid, use_fahrenheit)
+            climate_entity = AE200Climate(hass, device, controllerid, ipaddress, use_fahrenheit)
             devices.append(climate_entity)
 
         if devices:
