@@ -2,8 +2,11 @@
 
 DOMAIN = "mitsubishi_ae200"
 
+# Configuration keys
 CONF_CONTROLLER_ID = "controller_id"
 CONF_IP_ADDRESS = "ip_address"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"
 CONF_TEMPERATURE_UNIT = "temperature_unit"
 
 DEFAULT_NAME = "AutoH Mitsubishi AE200"
@@ -11,3 +14,6 @@ DEFAULT_NAME = "AutoH Mitsubishi AE200"
 # Temperature unit options
 TEMP_CELSIUS = "celsius"
 TEMP_FAHRENHEIT = "fahrenheit"
+
+# Default polling interval (seconds)
+DEFAULT_SCAN_INTERVAL = 30
