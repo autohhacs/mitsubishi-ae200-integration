@@ -14,6 +14,3 @@ DEFAULT_NAME = "AutoH Mitsubishi AE200"
 # Temperature unit options
 TEMP_CELSIUS = "celsius"
 TEMP_FAHRENHEIT = "fahrenheit"
-
-# Default polling interval (seconds)
-DEFAULT_SCAN_INTERVAL = 30
